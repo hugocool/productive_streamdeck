@@ -43,7 +43,13 @@ export class StatusServer {
     // Ping endpoint - accepts status updates from external agents
     this.app.post('/ping', (req: Request, res: Response) => {
       const { source, message, status } = req.body;
-      console.log(`Received ping from ${source || 'unknown'}:`, message || status);
+      
+      // Sanitize and validate input before logging
+      const sanitizedSource = typeof source === 'string' ? source.substring(0, 100) : 'unknown';
+      const sanitizedMessage = typeof message === 'string' ? message.substring(0, 500) : 
+                               typeof status === 'string' ? status.substring(0, 500) : '';
+      
+      console.log(`Received ping from ${sanitizedSource}:`, sanitizedMessage);
       res.json({
         received: true,
         timestamp: new Date().toISOString()
@@ -53,10 +59,14 @@ export class StatusServer {
     // Update endpoint - allows external agents to trigger state changes
     this.app.post('/update', (req: Request, res: Response) => {
       const { action, data } = req.body;
-      console.log(`Received update action: ${action}`, data);
+      
+      // Sanitize action before logging
+      const sanitizedAction = typeof action === 'string' ? action.substring(0, 100) : 'unknown';
+      
+      console.log(`Received update action: ${sanitizedAction}`, data);
       res.json({
         received: true,
-        action,
+        action: sanitizedAction,
         timestamp: new Date().toISOString()
       });
     });

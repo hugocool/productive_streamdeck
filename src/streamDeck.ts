@@ -160,12 +160,20 @@ export class StreamDeckController {
    */
   private async drawButton(keyIndex: number, text: string, color: string): Promise<void> {
     try {
+      // Sanitize text to prevent XML injection
+      const sanitizedText = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+      
       // Create an SVG with text
       const svg = `
         <svg width="72" height="72" xmlns="http://www.w3.org/2000/svg">
           <rect width="72" height="72" fill="${color}"/>
           <text x="36" y="45" font-family="Arial, sans-serif" font-size="16" font-weight="bold" 
-                text-anchor="middle" fill="white">${text}</text>
+                text-anchor="middle" fill="white">${sanitizedText}</text>
         </svg>
       `;
       

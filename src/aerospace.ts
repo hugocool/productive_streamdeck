@@ -42,6 +42,12 @@ export class AeroSpaceUtils {
    */
   static async focusWorkspace(workspace: string): Promise<void> {
     try {
+      // Validate workspace name to prevent command injection
+      if (!/^[a-zA-Z0-9_-]+$/.test(workspace)) {
+        console.error('Invalid workspace name:', workspace);
+        return;
+      }
+      
       console.log(`Focusing on workspace: ${workspace}`);
       await execAsync(`aerospace workspace ${workspace}`);
       console.log(`Focused on workspace: ${workspace}`);

@@ -21,19 +21,31 @@ async function main() {
 
     // Initialize Stream Deck controller
     const streamDeck = new StreamDeckController(stateMachine);
-    await streamDeck.initialize();
+    try {
+      await streamDeck.initialize();
+      console.log('\n=== Application Running ===');
+      console.log('Stream Deck Controller: Ready');
+      console.log('Status Server: Running on port 3000');
+      console.log('Press Ctrl+C to exit\n');
 
-    console.log('\n=== Application Running ===');
-    console.log('Stream Deck Controller: Ready');
-    console.log('Status Server: Running on port 3000');
-    console.log('Press Ctrl+C to exit\n');
+      // Graceful shutdown
+      process.on('SIGINT', async () => {
+        console.log('\n\nShutting down...');
+        await streamDeck.close();
+        process.exit(0);
+      });
+    } catch (streamDeckError) {
+      console.log('\n=== Application Running (No Stream Deck) ===');
+      console.log('Stream Deck Controller: Not available (no hardware detected)');
+      console.log('Status Server: Running on port 3000');
+      console.log('Press Ctrl+C to exit\n');
 
-    // Graceful shutdown
-    process.on('SIGINT', async () => {
-      console.log('\n\nShutting down...');
-      await streamDeck.close();
-      process.exit(0);
-    });
+      // Graceful shutdown without Stream Deck
+      process.on('SIGINT', () => {
+        console.log('\n\nShutting down...');
+        process.exit(0);
+      });
+    }
 
   } catch (error) {
     console.error('Failed to start application:', error);
