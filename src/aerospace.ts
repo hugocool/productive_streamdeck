@@ -3,6 +3,9 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
+// Configuration constants
+const STASH_WORKSPACE = 'stash';
+
 /**
  * Wrapper utilities for AeroSpace CLI operations
  * AeroSpace is a tiling window manager for macOS
@@ -16,7 +19,7 @@ export class AeroSpaceUtils {
     try {
       console.log('Stashing current window workspace...');
       // Move current window to a hidden workspace
-      await execAsync('aerospace move-node-to-workspace stash');
+      await execAsync(`aerospace move-node-to-workspace ${STASH_WORKSPACE}`);
       console.log('Window stashed successfully');
     } catch (error) {
       console.error('Failed to stash window:', error);
@@ -30,7 +33,7 @@ export class AeroSpaceUtils {
     try {
       console.log('Unstashing windows...');
       // Switch to stash workspace
-      await execAsync('aerospace workspace stash');
+      await execAsync(`aerospace workspace ${STASH_WORKSPACE}`);
       console.log('Switched to stash workspace');
     } catch (error) {
       console.error('Failed to unstash window:', error);

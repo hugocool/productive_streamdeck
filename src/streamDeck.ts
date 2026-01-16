@@ -1,4 +1,4 @@
-import { openStreamDeck, listStreamDecks } from '@elgato-stream-deck/node';
+import { openStreamDeck, listStreamDecks, StreamDeck } from '@elgato-stream-deck/node';
 import sharp from 'sharp';
 import { StateMachine, AppState } from './stateMachine';
 import { AeroSpaceUtils } from './aerospace';
@@ -14,7 +14,7 @@ import { AeroSpaceUtils } from './aerospace';
  * Top-right (4): Agentic AI
  */
 export class StreamDeckController {
-  private device: any;
+  private device: StreamDeck | null = null;
   private stateMachine: StateMachine;
 
   // Key indices
@@ -72,12 +72,14 @@ export class StreamDeckController {
    * Setup key press handlers
    */
   private setupKeyHandlers(): void {
+    if (!this.device) return;
+    
     this.device.on('down', (keyIndex: number) => {
       console.log(`Key ${keyIndex} pressed`);
       this.handleKeyPress(keyIndex);
     });
 
-    this.device.on('error', (error: Error) => {
+    this.device.on('error', (error: unknown) => {
       console.error('Stream Deck error:', error);
     });
   }
@@ -168,10 +170,13 @@ export class StreamDeckController {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&apos;');
       
+      // Validate color format (hex color or named color)
+      const sanitizedColor = /^#[0-9A-Fa-f]{6}$/.test(color) ? color : '#000000';
+      
       // Create an SVG with text
       const svg = `
         <svg width="72" height="72" xmlns="http://www.w3.org/2000/svg">
-          <rect width="72" height="72" fill="${color}"/>
+          <rect width="72" height="72" fill="${sanitizedColor}"/>
           <text x="36" y="45" font-family="Arial, sans-serif" font-size="16" font-weight="bold" 
                 text-anchor="middle" fill="white">${sanitizedText}</text>
         </svg>
@@ -184,7 +189,7 @@ export class StreamDeckController {
         .toBuffer();
       
       // Fill the key with the image
-      await this.device.fillKeyBuffer(keyIndex, buffer);
+      await this.device!.fillKeyBuffer(keyIndex, buffer);
     } catch (error) {
       console.error(`Failed to draw button ${keyIndex}:`, error);
     }
