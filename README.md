@@ -6,10 +6,10 @@ status server for external callbacks.
 
 ## Features
 
-- **State Machine**: Manages lifecycle with three states: `IDLE`, `ACTIVE`, `PAUSED`
+- **Lifecycle State**: `IDLE`, `RUNNING`, `PAUSED` with task selection + stash refs
 - **Stream Deck Integration**:
   - Key 0 (top-left): Lifecycle control (`START`/`PAUSE`/`RESUME`)
-  - Key 1 (top row): Stash/restore all visible windows (“big stash” toggle)
+  - Key 1 (top row): `STOP` when running/paused, `RESUME` when a global stash exists
   - Key 5 (middle-left): AI pulse indicator
   - Keys 10–14 (bottom row): Microsoft Edge shortcuts (when Edge is visible)
 - **Action Layers**:
@@ -108,8 +108,36 @@ npm start
 
 ## Testing
 
-See `TESTING.md` for the Stage 0.5 stash/restore verification plan and
+See `TESTING.md` for the Stage 1.5 stash stack verification plan and
 feedback form.
+See `STAGE2_TESTING.md` for Stage 2 task workspace testing and feedback.
+See `STAGE3_TESTING.md` for Stage 3 lifecycle testing and feedback.
+
+## Stash stack (Stage 1.5)
+
+STOP/RESUME now uses a stack of stashes (`stash@{0}`, `stash@{1}`, ...).
+Each STOP pushes a new stash (visible windows + visible workspaces); RESUME
+pops the latest stash and restores it.
+
+## Tasks as branches (Stage 2)
+
+Stage 2 introduces task workspaces:
+- Task workspace prefix: `task:<id>`
+- Checkout: `summon-workspace task:<id>` (no window moves)
+- Track focused: move focused window into `task:<id>`
+- Track visible: move visible windows into `task:<id>` with safety filters
+- Untrack focused: move focused window to `inbox`
+
+## Lifecycle over tasks (Stage 3)
+
+Lifecycle now treats tasks as the unit of focus:
+- START: stash ambient visible windows (excluding the task workspace), then checkout the task
+- PAUSE: stash task windows, then restore the ambient stash
+- RESUME: stash the current ambient view, checkout the task, then restore the task stash
+- STOP: stash task windows and restore ambient view (recoverable stop)
+
+Stage 3 does not close windows or clean strays automatically.
+START/RESUME require `selectedTaskId` in `state/appState.json`.
 
 ## Hardware handshake (check deck)
 
@@ -126,7 +154,7 @@ The application will:
 ## Key Layout
 
 ```
-[ 0 STATE ] [ 1 STASH] [   2   ] [   3   ] [   4   ]
+[ 0 STATE ] [ 1 STOP ] [   2   ] [   3   ] [   4   ]
 [  5  AI  ] [   6   ] [   7   ] [   8   ] [   9   ]
 [10 EDGE* ] [11 EDGE*] [12 EDGE*] [13 EDGE*] [14 EDGE*]
 ```
@@ -201,7 +229,7 @@ Stream Deck can refresh context-aware buttons.
 The plan/execute pipeline writes:
 - `debug/last-plan.json`
 - `debug/last-exec-log.json`
-- `state/globalStash.json`
+- `state/globalStash.json` (stash stack, version 2)
 - `state/appState.json`
 
 ## AeroSpace diagnostics

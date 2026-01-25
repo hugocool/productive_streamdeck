@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import type { Server } from 'http';
-import { AppState } from './stateMachine';
+import { LifecycleState, emptyLifecycleState } from './lifecycle';
 
 /**
  * Express server to receive status pings from Raycast/AI agents
@@ -9,7 +9,7 @@ export class StatusServer {
   private app: express.Application;
   private port: number = 3000;
   private server: Server | null = null;
-  private stateGetter: (() => AppState) | null = null;
+  private stateGetter: (() => LifecycleState) | null = null;
   private agentDoneHandler: (() => void) | null = null;
   private aeroSpaceEventHandler: (() => void) | null = null;
 
@@ -22,7 +22,7 @@ export class StatusServer {
   /**
    * Set the function to get current state
    */
-  setStateGetter(getter: () => AppState): void {
+  setStateGetter(getter: () => LifecycleState): void {
     this.stateGetter = getter;
   }
 
@@ -51,9 +51,13 @@ export class StatusServer {
 
     // Status endpoint - returns current state
     this.app.get('/status', (req: Request, res: Response) => {
-      const currentState = this.stateGetter ? this.stateGetter() : AppState.IDLE;
+      const currentState = this.stateGetter ? this.stateGetter() : emptyLifecycleState();
       res.json({
-        state: currentState,
+        lifecycle: currentState.lifecycle,
+        selectedTaskId: currentState.selectedTaskId,
+        activeTaskId: currentState.activeTaskId,
+        ambientStashId: currentState.ambientStashId,
+        pausedTaskStashId: currentState.pausedTaskStashId,
         timestamp: new Date().toISOString()
       });
     });

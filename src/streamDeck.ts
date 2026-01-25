@@ -1,24 +1,16 @@
-import { execFile } from 'child_process';
 import path from 'path';
 import { openStreamDeck, listStreamDecks, StreamDeck } from '@elgato-stream-deck/node';
-import { StateMachine, AppState } from './stateMachine';
-import { AeroSpaceUtils, VisibleWorkspace, WindowSnapshot } from './aerospace';
+import { LifecycleStore } from './stateMachine';
+import { LifecycleAction } from './lifecycle';
+import { AeroSpaceUtils } from './aerospace';
 import { RealRunner } from './adapters/aerospaceRunner';
 import { executePlan } from './core/executePlan';
-import { readFocusedWorkspaceSnapshot, readVisibleSnapshot } from './core/aeroSnapshot';
-import { planPauseFocusedWindows, planPersistAppState, planRestoreVisibleWindows, planResumeFocusedWindows, planStashVisibleWindows } from './core/plans';
-import { loadAppState, loadGlobalStash } from './core/persistence';
-import { ensureKeySenderBuilt, getKeySenderPath, parseKeySenderProbe } from './nativeHelper';
+import { readVisibleSnapshot } from './core/taskSnapshot';
+import { planStashPop, planStashPush } from './core/plans';
+import { loadLifecycleState, loadStashStack, StashStackStateV2 } from './core/persistence';
+import { runLifecycleAction } from './core/lifecycleActions';
+import { createKeySenderClient } from './appShortcuts';
 import { EdgeAction, EdgeMode, EDGE_KEYS, getEdgeActions } from './edgeControls';
-
-export type StateAction = 'START' | 'PAUSE' | 'RESUME';
-
-export function transitionState(current: AppState, action: StateAction): AppState | null {
-  if (action === 'START' && current === AppState.IDLE) return AppState.ACTIVE;
-  if (action === 'PAUSE' && current === AppState.ACTIVE) return AppState.PAUSED;
-  if (action === 'RESUME' && current === AppState.PAUSED) return AppState.ACTIVE;
-  return null;
-}
 
 export function shouldRenderEdgeRow(available: boolean): boolean {
   return available;
@@ -37,14 +29,12 @@ export function shouldRenderEdgeRow(available: boolean): boolean {
  */
 export class StreamDeckController {
   private device: StreamDeck | null = null;
-  private stateMachine: StateMachine;
+  private lifecycleStore: LifecycleStore;
   private agentPulseInterval: NodeJS.Timeout | null = null;
   private agentPulseTimeout: NodeJS.Timeout | null = null;
   private agentPulseActive = false;
   private iconSize = 72;
-  private pausedSnapshot: WindowSnapshot[] | null = null;
-  private stashSnapshot: WindowSnapshot[] | null = null;
-  private visibleWorkspaces: VisibleWorkspace[] = [];
+  private stashStack: StashStackStateV2 = { version: 2, updatedAt: '', stack: [] };
   private edgeShortcutAvailable = false;
   private edgeMode: EdgeMode = 'NAV';
   private holdTimers = new Map<number, NodeJS.Timeout>();
@@ -52,6 +42,7 @@ export class StreamDeckController {
   private edgeRefreshInterval: NodeJS.Timeout | null = null;
   private runner = new RealRunner();
   private dryRun = process.env.DRY_RUN === '1';
+  private keySender = createKeySenderClient();
 
   // Key indices
   private readonly PRIMARY_KEY = 0;
@@ -60,12 +51,12 @@ export class StreamDeckController {
   private readonly EDGE_SHORTCUT_KEY = 10; // Bottom-left
   private readonly FALLBACK_ICON_SIZE = 72;
 
-  constructor(stateMachine: StateMachine) {
-    this.stateMachine = stateMachine;
+  constructor(lifecycleStore: LifecycleStore) {
+    this.lifecycleStore = lifecycleStore;
     
     // Listen for state changes to update display
-    this.stateMachine.addListener((state: AppState) => {
-      this.updateStateButtons();
+    this.lifecycleStore.addListener(() => {
+      void this.updateStateButtons();
     });
   }
 
@@ -173,61 +164,48 @@ export class StreamDeckController {
    * Handle lifecycle button press
    */
   private async handlePrimaryAction(): Promise<void> {
-    const current = this.stateMachine.getState();
-    if (current === AppState.IDLE) {
-      await this.handleStateAction('START');
+    const current = this.lifecycleStore.getState();
+    if (current.lifecycle === 'IDLE') {
+      await this.handleLifecycleAction('START');
       return;
     }
-    if (current === AppState.ACTIVE) {
-      await this.handleStateAction('PAUSE');
+    if (current.lifecycle === 'RUNNING') {
+      await this.handleLifecycleAction('PAUSE');
+      return;
+    }
+    if (current.lifecycle === 'PAUSED') {
+      await this.handleLifecycleAction('RESUME');
     }
   }
 
-  private async handleStateAction(action: StateAction): Promise<void> {
-    const previousState = this.stateMachine.getState();
-    const nextState = transitionState(previousState, action);
-    if (!nextState || nextState === previousState) {
+  private async handleLifecycleAction(action: LifecycleAction): Promise<void> {
+    const current = this.lifecycleStore.getState();
+    const nextState = await runLifecycleAction(action, current, this.runner, { dryRun: this.dryRun });
+    if (!nextState) {
       return;
     }
-
-    this.stateMachine.setState(nextState);
-    await executePlan(planPersistAppState(nextState), this.runner, { dryRun: this.dryRun });
-    console.log(`Lifecycle: ${previousState} -> ${nextState}`);
-
-    if (previousState === AppState.ACTIVE && nextState === AppState.PAUSED) {
-      const focusedWindows = await readFocusedWorkspaceSnapshot(this.runner);
-      this.pausedSnapshot = focusedWindows;
-      const plan = planPauseFocusedWindows(focusedWindows, 'STASH');
-      await executePlan(plan, this.runner, { dryRun: this.dryRun });
-    }
-
-    if (previousState === AppState.PAUSED && nextState === AppState.ACTIVE) {
-      const strayWindows = await readFocusedWorkspaceSnapshot(this.runner);
-      const strayWindowIds = strayWindows.map((window) => window.id);
-      if (this.pausedSnapshot?.length) {
-        const plan = planResumeFocusedWindows(this.pausedSnapshot, strayWindowIds);
-        await executePlan(plan, this.runner, { dryRun: this.dryRun });
-      }
-      this.pausedSnapshot = null;
-    }
-
+    this.lifecycleStore.setState(nextState);
+    await this.syncStashStateFromDisk();
     await this.updateStateButtons();
   }
 
   private async handleStopResumeAction(): Promise<void> {
-    if (this.stashSnapshot) {
-      const stash = await loadGlobalStash();
-      if (stash) {
-        const plan = planRestoreVisibleWindows(stash, '__blank');
-        await executePlan(plan, this.runner, { dryRun: this.dryRun });
-      }
+    const current = this.lifecycleStore.getState();
+    if (current.lifecycle === 'RUNNING' || current.lifecycle === 'PAUSED') {
+      await this.handleLifecycleAction('STOP');
+      return;
+    }
+
+    if (this.stashStack.stack.length > 0) {
+      const { plan } = planStashPop(0, this.stashStack);
+      await executePlan(plan, this.runner, { dryRun: this.dryRun });
       await this.syncStashStateFromDisk();
       await this.updateStateButtons();
       return;
     }
 
     const snapshot = await readVisibleSnapshot(this.runner);
-    const plan = planStashVisibleWindows(snapshot, 'STASH', '__blank');
+    const { plan } = planStashPush({ kind: 'visible' }, snapshot, this.stashStack, 'STASH', '__blank');
     await executePlan(plan, this.runner, { dryRun: this.dryRun });
     await this.syncStashStateFromDisk();
     await this.updateStateButtons();
@@ -239,8 +217,8 @@ export class StreamDeckController {
   private async handleAIPress(): Promise<void> {
     console.log('Agentic AI button pressed');
     // Toggle between stashing and focusing
-    const currentState = this.stateMachine.getState();
-    if (currentState === AppState.ACTIVE) {
+    const currentState = this.lifecycleStore.getState();
+    if (currentState.lifecycle === 'RUNNING') {
       await AeroSpaceUtils.stashWindow();
     } else {
       await AeroSpaceUtils.unstashWindow();
@@ -251,35 +229,39 @@ export class StreamDeckController {
    * Update the lifecycle button display
    */
   private async updateStateButtons(): Promise<void> {
-    const state = this.stateMachine.getState();
+    const state = this.lifecycleStore.getState();
 
-    const primaryLabel = state === AppState.ACTIVE ? 'PAUSE' : 'START';
-    const primaryColor = state === AppState.ACTIVE ? '#FFA500' : '#00FF00';
-    const primaryInactive = state === AppState.PAUSED ? '#3A3A3A' : primaryColor;
-    const resumeLabel = this.stashSnapshot ? 'RESUME' : 'STOP';
-    const resumeColor = this.stashSnapshot ? '#0080FF' : '#AA3322';
+    let primaryLabel = 'START';
+    let primaryColor = '#00FF00';
+    if (state.lifecycle === 'RUNNING') {
+      primaryLabel = 'PAUSE';
+      primaryColor = '#FFA500';
+    } else if (state.lifecycle === 'PAUSED') {
+      primaryLabel = 'RESUME';
+      primaryColor = '#0080FF';
+    }
 
-    await this.drawButton(this.PRIMARY_KEY, primaryLabel, primaryInactive);
-    await this.drawButton(this.STOP_KEY, resumeLabel, resumeColor);
+    let stopLabel = 'STOP';
+    let stopColor = '#AA3322';
+    if (state.lifecycle === 'IDLE') {
+      if (this.stashStack.stack.length > 0) {
+        stopLabel = 'RESUME';
+        stopColor = '#0080FF';
+      }
+    }
+
+    await this.drawButton(this.PRIMARY_KEY, primaryLabel, primaryColor);
+    await this.drawButton(this.STOP_KEY, stopLabel, stopColor);
   }
 
   private async hydratePersistedState(): Promise<void> {
-    const persisted = await loadAppState();
-    if (persisted) {
-      this.stateMachine.setState(persisted);
-    }
+    const persisted = await loadLifecycleState();
+    this.lifecycleStore.setState(persisted);
     await this.syncStashStateFromDisk();
   }
 
   private async syncStashStateFromDisk(): Promise<void> {
-    const stash = await loadGlobalStash();
-    if (!stash) {
-      this.stashSnapshot = null;
-      this.visibleWorkspaces = [];
-      return;
-    }
-    this.stashSnapshot = stash.windows.map((window) => ({ id: window.id, workspace: window.workspace }));
-    this.visibleWorkspaces = stash.visibleWorkspaces;
+    this.stashStack = await loadStashStack();
   }
 
   /**
@@ -303,19 +285,10 @@ export class StreamDeckController {
 
   async refreshEdgeShortcutAvailability(): Promise<void> {
     try {
-      const helperPath = await ensureKeySenderBuilt();
-      const args = ['--bundle-id', 'com.microsoft.edgemac', '--probe', '--require-visible'];
-      const stdout = await new Promise<string>((resolve, reject) => {
-        execFile(helperPath, args, { encoding: 'utf8' }, (error, output) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve(output);
-        });
+      const parsed = await this.keySender.probeApp({
+        bundleId: 'com.microsoft.edgemac',
+        requireVisibleOnScreen: true
       });
-
-      const parsed = parseKeySenderProbe(stdout);
       this.edgeShortcutAvailable = parsed?.visibleOnScreen ?? false;
     } catch (error) {
       console.error('Failed to probe Edge visibility:', error);
@@ -441,24 +414,11 @@ export class StreamDeckController {
     if (!this.edgeShortcutAvailable) {
       return;
     }
-    const helperPath = await ensureKeySenderBuilt();
-    const args = [
-      '--bundle-id',
-      'com.microsoft.edgemac',
-      '--shortcut',
+    await this.keySender.sendShortcutToApp({
+      bundleId: 'com.microsoft.edgemac',
       shortcut,
-      '--require-visible'
-    ];
-
-    await new Promise<void>((resolve, reject) => {
-      execFile(helperPath, args, { encoding: 'utf8' }, (error, stdout) => {
-        if (error) {
-          console.error('KeySender failed:', stdout || error.message);
-          reject(error);
-          return;
-        }
-        resolve();
-      });
+      requireVisibleOnScreen: true,
+      restoreFocus: true
     });
   }
 

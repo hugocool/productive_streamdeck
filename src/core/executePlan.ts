@@ -1,13 +1,14 @@
 import { AerospaceRunner } from '../adapters/aerospaceRunner';
 import { Effect, Plan } from './plan';
-import { saveAppState, saveGlobalStash, writeDebugExec, writeDebugPlan } from './persistence';
+import { saveLifecycleState, saveStashStack, saveTaskRegistry, writeDebugExec, writeDebugPlan } from './persistence';
 
 type ExecutionLog = {
   planId: string;
   startedAt: string;
   dryRun: boolean;
-  steps: { args: string[]; skipped: boolean }[];
+  steps: { args: string[]; skipped: boolean; allowFailure?: boolean }[];
   effectsApplied: boolean;
+  captures: Record<string, string>;
 };
 
 async function applyEffect(effect: Effect): Promise<void> {
@@ -16,11 +17,15 @@ async function applyEffect(effect: Effect): Promise<void> {
     return;
   }
   if (effect.target === 'globalStash') {
-    await saveGlobalStash(effect.payload as any);
+    await saveStashStack(effect.payload as any);
     return;
   }
   if (effect.target === 'appState') {
-    await saveAppState(effect.payload as any);
+    await saveLifecycleState(effect.payload as any);
+    return;
+  }
+  if (effect.target === 'taskRegistry') {
+    await saveTaskRegistry(effect.payload as any);
   }
 }
 
@@ -36,14 +41,26 @@ export async function executePlan(
     startedAt: new Date().toISOString(),
     dryRun: options.dryRun,
     steps: [],
-    effectsApplied: false
+    effectsApplied: false,
+    captures: {}
   };
 
   for (const step of plan.steps) {
     const skip = options.dryRun && step.kind === 'mutate';
-    log.steps.push({ args: step.args, skipped: skip });
+    log.steps.push({ args: step.args, skipped: skip, allowFailure: step.allowFailure });
     if (skip) continue;
-    await runner.run(step.args);
+    try {
+      const output = await runner.run(step.args);
+      if (step.captureAs) {
+        log.captures[step.captureAs] = output;
+      }
+    } catch (error) {
+      if (step.allowFailure) {
+        console.warn('[AeroSpace non-fatal]', { args: step.args, error });
+        continue;
+      }
+      throw error;
+    }
   }
 
   if (!options.dryRun) {

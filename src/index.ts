@@ -1,4 +1,4 @@
-import { StateMachine } from './stateMachine';
+import { LifecycleStore } from './stateMachine';
 import { StreamDeckController } from './streamDeck';
 import { StatusServer } from './server';
 
@@ -12,17 +12,17 @@ async function main() {
 
   try {
     // Initialize state machine
-    const stateMachine = new StateMachine();
+    const lifecycleStore = new LifecycleStore();
 
     // Initialize Express server
     const server = new StatusServer();
-    server.setStateGetter(() => stateMachine.getState());
+    server.setStateGetter(() => lifecycleStore.getState());
     const statusPort = await server.start(Number(process.env.PORT) || 3000);
 
     // Initialize Stream Deck controller
     let streamDeck: StreamDeckController | null = null;
     try {
-      streamDeck = new StreamDeckController(stateMachine);
+      streamDeck = new StreamDeckController(lifecycleStore);
       server.setAgentDoneHandler(() => {
         if (streamDeck) void streamDeck.startAgentPulse(10_000);
       });

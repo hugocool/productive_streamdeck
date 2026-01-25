@@ -8,6 +8,7 @@ struct Config {
   let requireVisibleOnScreen: Bool
   let restoreFocus: Bool
   let probeOnly: Bool
+  let activationTimeoutMs: Int
 }
 
 struct ResultPayload: Codable {
@@ -45,6 +46,7 @@ func parseArgs() -> Config? {
   var requireVisibleOnScreen = false
   var restoreFocus = true
   var probeOnly = false
+  var activationTimeoutMs = 1000
 
   var it = CommandLine.arguments.dropFirst().makeIterator()
   while let arg = it.next() {
@@ -61,6 +63,8 @@ func parseArgs() -> Config? {
       restoreFocus = false
     case "--probe":
       probeOnly = true
+    case "--activation-timeout-ms":
+      if let value = it.next(), let ms = Int(value) { activationTimeoutMs = ms }
     default:
       return nil
     }
@@ -72,7 +76,8 @@ func parseArgs() -> Config? {
     requireVisibleOnActiveDisplay: requireVisible,
     requireVisibleOnScreen: requireVisibleOnScreen,
     restoreFocus: restoreFocus,
-    probeOnly: probeOnly
+    probeOnly: probeOnly,
+    activationTimeoutMs: activationTimeoutMs
   )
 }
 
@@ -143,17 +148,25 @@ func requestPostEventAccess() -> Bool {
   return CGRequestPostEventAccess()
 }
 
-func activateApp(bundleId: String) -> NSRunningApplication? {
+func activateApp(bundleId: String, timeoutMs: Int) -> NSRunningApplication? {
   let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
   guard let app = apps.first else { return nil }
-  app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
 
+  if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleId {
+    return app
+  }
+
+  app.activate(options: [.activateIgnoringOtherApps])
+  let timeoutSeconds = max(0.05, Double(timeoutMs) / 1000.0)
   let start = Date()
-  while Date().timeIntervalSince(start) < 0.3 {
-    if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleId { return app }
+  while Date().timeIntervalSince(start) < timeoutSeconds {
+    if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleId {
+      return app
+    }
     RunLoop.current.run(until: Date().addingTimeInterval(0.01))
   }
-  return app
+
+  return nil
 }
 
 func keyCodeForToken(_ token: String) -> CGKeyCode? {
@@ -272,7 +285,7 @@ if !requestPostEventAccess() {
 }
 
 let previousApp = NSWorkspace.shared.frontmostApplication
-if activateApp(bundleId: cfg.bundleId) == nil {
+if activateApp(bundleId: cfg.bundleId, timeoutMs: cfg.activationTimeoutMs) == nil {
   printJSON(ResultPayload(ok: false, code: ExitCode.activationFailed, message: "Activation failed", bundleId: cfg.bundleId, visibleOnActiveDisplay: visibleOnActive, visibleOnScreen: visibleOnScreen))
   exit(Int32(ExitCode.activationFailed))
 }

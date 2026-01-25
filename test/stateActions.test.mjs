@@ -1,17 +1,24 @@
 import test from './testHarness.mjs';
 import assert from 'assert';
 
-import { transitionState } from '../dist/streamDeck.js';
-import { AppState } from '../dist/stateMachine.js';
+import { transitionLifecycle, emptyLifecycleState } from '../dist/lifecycle.js';
 
-test('transitionState handles start/pause/resume', () => {
-  assert.equal(transitionState(AppState.IDLE, 'START'), AppState.ACTIVE);
-  assert.equal(transitionState(AppState.ACTIVE, 'PAUSE'), AppState.PAUSED);
-  assert.equal(transitionState(AppState.PAUSED, 'RESUME'), AppState.ACTIVE);
+test('transitionLifecycle handles start/pause/resume/stop', () => {
+  const base = { ...emptyLifecycleState(), selectedTaskId: 'task-1' };
+  assert.equal(transitionLifecycle({ ...base, lifecycle: 'IDLE' }, 'START'), 'RUNNING');
+  assert.equal(transitionLifecycle({ ...base, lifecycle: 'RUNNING' }, 'PAUSE'), 'PAUSED');
+  assert.equal(transitionLifecycle({ ...base, lifecycle: 'PAUSED' }, 'RESUME'), 'RUNNING');
+  assert.equal(transitionLifecycle({ ...base, lifecycle: 'RUNNING' }, 'STOP'), 'IDLE');
 });
 
-test('transitionState ignores invalid actions for current state', () => {
-  assert.equal(transitionState(AppState.IDLE, 'PAUSE'), null);
-  assert.equal(transitionState(AppState.IDLE, 'RESUME'), null);
-  assert.equal(transitionState(AppState.ACTIVE, 'RESUME'), null);
+test('transitionLifecycle ignores invalid actions for current state', () => {
+  const base = { ...emptyLifecycleState(), selectedTaskId: 'task-1' };
+  assert.equal(transitionLifecycle({ ...base, lifecycle: 'IDLE' }, 'PAUSE'), null);
+  assert.equal(transitionLifecycle({ ...base, lifecycle: 'IDLE' }, 'RESUME'), null);
+  assert.equal(transitionLifecycle({ ...base, lifecycle: 'RUNNING' }, 'RESUME'), null);
+});
+
+test('transitionLifecycle requires a selected task for start', () => {
+  const base = emptyLifecycleState();
+  assert.equal(transitionLifecycle({ ...base, lifecycle: 'IDLE' }, 'START'), null);
 });

@@ -19,6 +19,7 @@ export type VisibleWorkspace = {
 };
 
 type WindowListEntry = Record<string, unknown>;
+type WorkspaceListEntry = Record<string, unknown>;
 
 /**
  * Wrapper utilities for AeroSpace CLI operations
@@ -114,6 +115,43 @@ export class AeroSpaceUtils {
       results.push({ monitorId, workspace });
     }
     return results;
+  }
+
+  static parseVisibleWorkspacesJson(raw: string): VisibleWorkspace[] {
+    try {
+      const parsed = JSON.parse(raw) as WorkspaceListEntry[];
+      if (!Array.isArray(parsed)) return [];
+      const results: VisibleWorkspace[] = [];
+
+      for (const entry of parsed) {
+        const monitorId =
+          typeof entry['monitor-id'] === 'string'
+            ? entry['monitor-id']
+            : typeof entry['monitorId'] === 'string'
+              ? entry['monitorId']
+              : typeof entry['monitor-id'] === 'number'
+                ? String(entry['monitor-id'])
+                : typeof entry['monitorId'] === 'number'
+                  ? String(entry['monitorId'])
+                  : undefined;
+
+        const workspace =
+          typeof entry['workspace'] === 'string'
+            ? entry['workspace']
+            : typeof entry['workspace-name'] === 'string'
+              ? entry['workspace-name']
+              : typeof entry['name'] === 'string'
+                ? entry['name']
+                : '';
+
+        if (!monitorId || !workspace) continue;
+        results.push({ monitorId, workspace });
+      }
+
+      return results;
+    } catch {
+      return [];
+    }
   }
 
   static diffWindowIds(before: number[], after: number[]): number[] {
@@ -236,9 +274,10 @@ export class AeroSpaceUtils {
         '--monitor',
         'all',
         '--visible',
-        '--format',
-        '%{monitor-id}\t%{workspace}'
+        '--json'
       ]);
+      const parsed = AeroSpaceUtils.parseVisibleWorkspacesJson(stdout);
+      if (parsed.length > 0) return parsed;
       return AeroSpaceUtils.parseVisibleWorkspaces(stdout);
     } catch (error) {
       console.error('Failed to list visible workspaces:', error);
@@ -322,3 +361,4 @@ export const diffWindowIds = AeroSpaceUtils.diffWindowIds;
 export const buildListWindowsArgs = AeroSpaceUtils.buildListWindowsArgs;
 export const buildMoveToWorkspaceArgs = AeroSpaceUtils.buildMoveToWorkspaceArgs;
 export const parseVisibleWorkspaces = AeroSpaceUtils.parseVisibleWorkspaces;
+export const parseVisibleWorkspacesJson = AeroSpaceUtils.parseVisibleWorkspacesJson;

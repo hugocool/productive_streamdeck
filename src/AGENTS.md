@@ -9,6 +9,8 @@ This folder holds the controller logic (Stream Deck rendering + button handlers)
 - Button mapping + press/hold behavior: `src/streamDeck.ts`
 - App-specific rows/layers: small modules like `src/edgeControls.ts`
 - AeroSpace commands + snapshot/stash helpers: `src/aerospace.ts`
+- Lifecycle plan builders: `src/core/lifecyclePlans.ts`
+- Lifecycle execution (snapshot → plan → execute): `src/core/lifecycleActions.ts`
 - Callback endpoints: `src/server.ts`
 
 ## Conventions
@@ -17,13 +19,12 @@ This folder holds the controller logic (Stream Deck rendering + button handlers)
 - Document rationale in `AGENTS.md` (here or deeper), not in docstrings.
 
 ## Workflow defaults (do not drift)
-- START: checkout/focus only; tracking is explicit (“add window to task”).
-  - Hold START: adopt visible → task (bulk add).
-  - Future (optional): auto-track “new windows after START” toggle (default off).
-- PAUSE: stash visible (multi-monitor) + switch to `INBOX`.
-  - Hold PAUSE: stash focused only (surgical).
-- STOP: stash + archive (recoverable).
-  - Hold STOP: close windows (destructive).
+- START: stash ambient visible windows (excluding the task workspace) + checkout task.
+  - Tracking stays explicit (“add window to task”); START does not move windows into the task.
+- PAUSE: stash task windows + restore ambient.
+- RESUME: stash ambient + checkout task + restore task stash.
+- STOP: stash task windows + restore ambient (recoverable stop).
+- Lifecycle actions require `selectedTaskId` in `state/appState.json`.
 - “Detach-but-visible” is a separate tools-layer operation (not STOP).
 - VIEW is a dedicated layer (status/branch list/stash list/recovery).
 - Hold = intensity; Layer toggle = category.

@@ -1,7 +1,8 @@
-# Testing Guide: Stage 0.5 Plans + Stash/Resume
+# Testing Guide: Stage 1.5 Stash Stack
 
-This guide walks a tester through validating the new plan/execute plumbing,
-stash/restore behavior, and persistence. It ends with a short feedback form.
+This guide walks a tester through validating the stash stack (stash@{n}),
+plan/execute plumbing, and persistence. It ends with a short feedback form.
+For lifecycle-over-task testing, use `STAGE3_TESTING.md`.
 
 ## Prereqs
 - macOS with AeroSpace installed and running
@@ -12,9 +13,10 @@ Optional:
 - `DRY_RUN=1` for safe, non-mutating plan inspection
 
 ## What changed (quick context)
-- Stream Deck actions now run: **Snapshot → Plan → Execute**
+- Stream Deck actions run: **Snapshot → Plan → Execute**
+- STOP/RESUME now use a **stash stack** (`stash@{0}`, `stash@{1}`, ...)
 - Plans are persisted to `debug/last-plan.json`
-- Global stash + app state are persisted in `state/`
+- Stash stack + app state are persisted in `state/`
 
 ## Test 1: DRY_RUN plan output (safe)
 1. Stop the app if running.
@@ -45,14 +47,13 @@ Expected: no actual window moves (dry run), but plans are created.
 
 Expected: windows are moved to `STASH` and restored cleanly.
 
-## Test 3: Pause/Resume (focused workspace only)
-1. Ensure you have a focused workspace with windows.
+## Test 3: PAUSE/RESUME (global visible stash)
+1. Ensure multiple windows are visible across monitors.
 2. Press **START/PAUSE** (button 0).
-3. Confirm those windows move to `STASH`.
-4. Open a stray window in the focused workspace.
-5. Press **RESUME** (button 1 if you are paused).
+3. Confirm visible windows move to `STASH` and blank workspaces appear.
+4. Press **START/PAUSE** again to resume (button 0).
 
-Expected: straggler windows close, stashed windows restore.
+Expected: windows restore; no windows are closed.
 
 ## Test 4: Persistence across restart
 1. Press **STOP** to stash visible windows.
@@ -62,10 +63,31 @@ Expected: straggler windows close, stashed windows restore.
 
 Expected: windows still restore (state loaded from `state/`).
 
+## Test 5: Stash stack (stash@{n})
+1. With a visible workspace set A, press **STOP** (button 1).
+2. Switch to a different visible workspace set B.
+3. Press **STOP** again.
+4. Press **RESUME** once.
+5. Confirm set B restores first and set A remains stashed.
+
+Expected: multiple stashes unwind in LIFO order.
+
+## Test 6: Task primitives (Stage 2)
+1. Use `DRY_RUN=1 npm run dev`.
+2. In a Node REPL (or temporary script), call:
+   - `checkoutTask("demo", runner, { dryRun: true })`
+   - `trackFocused("demo", runner, { dryRun: true })`
+   - `trackVisible("demo", runner, { dryRun: true })`
+3. Inspect `debug/last-plan.json` for:
+   - `summon-workspace task:demo`
+   - `move-node-to-workspace --window-id <id> task:demo`
+
+Expected: plans are generated without mutating windows in dry run.
+
 ## Artifacts to inspect
 - `debug/last-plan.json`
 - `debug/last-exec-log.json`
-- `state/globalStash.json`
+- `state/globalStash.json` (version 2 stash stack)
 - `state/appState.json`
 
 ## Feedback form
@@ -79,8 +101,9 @@ Please fill this out after testing.
 ### Results
 - DRY_RUN plan generation: pass/fail + notes
 - STOP/RESUME stash/restore: pass/fail + notes
-- PAUSE/RESUME focused flow: pass/fail + notes
+- PAUSE/RESUME visible flow: pass/fail + notes
 - Persistence after restart: pass/fail + notes
+- Stash stack LIFO behavior: pass/fail + notes
 
 ### Issues
 - What broke?

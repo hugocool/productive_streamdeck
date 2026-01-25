@@ -99,7 +99,7 @@ VIEW should expose:
 `src/index.ts` is the entry point. It:
 
 - Connects to the Stream Deck via `elgato-stream-deck`
-- Maintains a lightweight lifecycle state (`IDLE`, `ACTIVE`, `PAUSED`)
+- Maintains lifecycle state (`IDLE`, `RUNNING`, `PAUSED`) plus task + stash refs
 - Renders button images via `sharp` (text labels + a cycle icon)
 - Starts an HTTP server for agent callbacks (`GET /agent-done`)
 - Integrates with AeroSpace (window stash/unstash)
@@ -110,8 +110,8 @@ VIEW should expose:
 - If AeroSpace actions appear to do nothing, suspect PATH issues (`aerospace` not found) and check the `[AeroSpace FAIL]` log payload for `ENOENT`/stderr.
 
 ### Stream Deck button mapping (15-key)
-- Key 0 (top-left): lifecycle control (START/PAUSE/RESUME)
-- Key 1 (top row): stash/restore all currently visible windows (used as a “big stash” toggle)
+- Key 0 (top-left): START/PAUSE/RESUME (lifecycle over tasks)
+- Key 1 (top row): STOP when running/paused, RESUME when a global stash exists
 - Key 5 (middle-left): AI pulse indicator
 - Keys 10–14 (bottom row): Microsoft Edge shortcut row (when Edge is visible)
 
@@ -169,6 +169,30 @@ prompt for Accessibility / Input Monitoring permissions the first time it runs.
 - Avoid `--monitor all` unless explicitly performing a global stash.
 - Prefer `--window-id` operations over focus-dependent commands.
 
+## Stage 1.5 stash stack requirements
+- `globalStash.json` is a versioned stack (`version: 2`, `stack: []`).
+- STOP/RESUME must map to `stash push`/`stash pop` for `stash@{0}`.
+- Stash apply must be non-fatal if a window no longer exists (log and continue).
+- PAUSE uses global visible scope by default; focused-only is a later opt-in.
+
+## Stage 2 task workspace rules
+- Task workspaces are namespaced: `task:<id>`.
+- Checkout only summons the workspace; it does not move windows.
+- Tracking is explicit: track focused or visible windows into a task workspace.
+- trackVisible must not steal from other `task:*` workspaces by default.
+- Untrack moves focused window to `inbox`.
+- Keep `STAGE2_TESTING.md` updated when task workflows change.
+
+## Stage 3 lifecycle requirements
+- App state is `(selectedTaskId, lifecycle, stash refs)` and persisted in `state/appState.json`.
+- START/RESUME are no-ops without `selectedTaskId` (selection is explicit).
+- START stashes ambient visible windows (excluding the task workspace) and checks out the task.
+- PAUSE stashes task windows and restores the ambient stash.
+- RESUME stashes the current ambient view, checks out the task, then restores the task stash.
+- STOP stashes task windows and restores the ambient view (recoverable stop).
+- Stage 3 does not close windows or auto-clean strays.
+- Keep `STAGE3_TESTING.md` updated when lifecycle behavior changes.
+
 ## Tooling and setup
 Build and run:
 - Build: `npm run build` (TypeScript -> `dist/`)
@@ -204,6 +228,11 @@ Packaging/deploy:
 - Implemented Stage 0.5 plan/execute plumbing: Stream Deck actions now build
   deterministic plans, execute them via an AeroSpace runner, support `DRY_RUN=1`,
   and persist `state/globalStash.json` + `state/appState.json` with atomic writes.
+- Implemented Stage 1.5 stash stack: STOP/RESUME now push/pop a `stash@{n}` stack
+  (global visible scope), with persistence migration from version 1 snapshots.
+- Implemented Stage 3 lifecycle: lifecycle state is persisted with task + stash refs,
+  START/PAUSE/RESUME/STOP are built on the stash stack + task checkout, and STOP
+  records `lastStopStashId` in the task registry for recoverable sessions.
 - Added a macOS install script that builds the Node and Swift components,
   creates a minimal `.app` bundle, and bakes in a selected free port plus a
   matching AeroSpace template so local installs avoid port collisions.
@@ -216,3 +245,4 @@ Packaging/deploy:
 - Added an AeroSpace sync helper that rewrites the local AeroSpace config with
   a free port and stores it in `.streamdeck-port`, plus a dev wrapper that reads
   that port so debug runs stay aligned with the window-manager hook.
+- Tightened the native shortcut sender so it only posts key events after the target app is confirmed frontmost (prevents shortcuts leaking to the currently focused app when activation is slow), and added a small reusable Node wrapper (`src/appShortcuts.ts`) so app-targeted shortcuts are composable beyond Edge.
