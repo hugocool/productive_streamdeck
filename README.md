@@ -106,6 +106,11 @@ npm run build
 npm start
 ```
 
+## Testing
+
+See `TESTING.md` for the Stage 0.5 stash/restore verification plan and
+feedback form.
+
 ## Hardware handshake (check deck)
 
 Use the minimal Stream Deck + AeroSpace probe:
@@ -190,6 +195,14 @@ If you want the “INBOX/untracked by default” workflow, adjust the AeroSpace 
 
 We use `exec-on-workspace-change` to notify the Node controller so the
 Stream Deck can refresh context-aware buttons.
+
+## State and debug artifacts
+
+The plan/execute pipeline writes:
+- `debug/last-plan.json`
+- `debug/last-exec-log.json`
+- `state/globalStash.json`
+- `state/appState.json`
 
 ## AeroSpace diagnostics
 

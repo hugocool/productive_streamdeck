@@ -3,6 +3,11 @@ import path from 'path';
 import { openStreamDeck, listStreamDecks, StreamDeck } from '@elgato-stream-deck/node';
 import { StateMachine, AppState } from './stateMachine';
 import { AeroSpaceUtils, VisibleWorkspace, WindowSnapshot } from './aerospace';
+import { RealRunner } from './adapters/aerospaceRunner';
+import { executePlan } from './core/executePlan';
+import { readFocusedWorkspaceSnapshot, readVisibleSnapshot } from './core/aeroSnapshot';
+import { planPauseFocusedWindows, planPersistAppState, planRestoreVisibleWindows, planResumeFocusedWindows, planStashVisibleWindows } from './core/plans';
+import { loadAppState, loadGlobalStash } from './core/persistence';
 import { ensureKeySenderBuilt, getKeySenderPath, parseKeySenderProbe } from './nativeHelper';
 import { EdgeAction, EdgeMode, EDGE_KEYS, getEdgeActions } from './edgeControls';
 
@@ -45,6 +50,8 @@ export class StreamDeckController {
   private holdTimers = new Map<number, NodeJS.Timeout>();
   private holdFired = new Set<number>();
   private edgeRefreshInterval: NodeJS.Timeout | null = null;
+  private runner = new RealRunner();
+  private dryRun = process.env.DRY_RUN === '1';
 
   // Key indices
   private readonly PRIMARY_KEY = 0;
@@ -91,6 +98,7 @@ export class StreamDeckController {
       this.setupKeyHandlers();
       
       // Initialize button displays
+      await this.hydratePersistedState();
       await this.updateStateButtons();
       await this.updateAIButton();
       await this.refreshEdgeShortcutAvailability();
@@ -183,19 +191,22 @@ export class StreamDeckController {
     }
 
     this.stateMachine.setState(nextState);
+    await executePlan(planPersistAppState(nextState), this.runner, { dryRun: this.dryRun });
     console.log(`Lifecycle: ${previousState} -> ${nextState}`);
 
     if (previousState === AppState.ACTIVE && nextState === AppState.PAUSED) {
-      this.pausedSnapshot = await AeroSpaceUtils.stashFocusedWindows();
+      const focusedWindows = await readFocusedWorkspaceSnapshot(this.runner);
+      this.pausedSnapshot = focusedWindows;
+      const plan = planPauseFocusedWindows(focusedWindows, 'STASH');
+      await executePlan(plan, this.runner, { dryRun: this.dryRun });
     }
 
     if (previousState === AppState.PAUSED && nextState === AppState.ACTIVE) {
-      const strayWindowIds = await AeroSpaceUtils.listWindowIdsFocused();
-      if (strayWindowIds.length > 0) {
-        await AeroSpaceUtils.closeWindows(strayWindowIds);
-      }
+      const strayWindows = await readFocusedWorkspaceSnapshot(this.runner);
+      const strayWindowIds = strayWindows.map((window) => window.id);
       if (this.pausedSnapshot?.length) {
-        await AeroSpaceUtils.restoreSnapshot(this.pausedSnapshot);
+        const plan = planResumeFocusedWindows(this.pausedSnapshot, strayWindowIds);
+        await executePlan(plan, this.runner, { dryRun: this.dryRun });
       }
       this.pausedSnapshot = null;
     }
@@ -205,17 +216,20 @@ export class StreamDeckController {
 
   private async handleStopResumeAction(): Promise<void> {
     if (this.stashSnapshot) {
-      await AeroSpaceUtils.restoreVisibleSnapshot(this.stashSnapshot);
-      await this.restoreVisibleWorkspaces();
-      this.stashSnapshot = null;
-      this.visibleWorkspaces = [];
+      const stash = await loadGlobalStash();
+      if (stash) {
+        const plan = planRestoreVisibleWindows(stash, '__blank');
+        await executePlan(plan, this.runner, { dryRun: this.dryRun });
+      }
+      await this.syncStashStateFromDisk();
       await this.updateStateButtons();
       return;
     }
 
-    this.visibleWorkspaces = await AeroSpaceUtils.listVisibleWorkspaces();
-    this.stashSnapshot = await AeroSpaceUtils.stashVisibleWindows('STASH');
-    await this.hideVisibleWorkspaces();
+    const snapshot = await readVisibleSnapshot(this.runner);
+    const plan = planStashVisibleWindows(snapshot, 'STASH', '__blank');
+    await executePlan(plan, this.runner, { dryRun: this.dryRun });
+    await this.syncStashStateFromDisk();
     await this.updateStateButtons();
   }
 
@@ -249,27 +263,23 @@ export class StreamDeckController {
     await this.drawButton(this.STOP_KEY, resumeLabel, resumeColor);
   }
 
-  private async hideVisibleWorkspaces(): Promise<void> {
-    const monitors = Array.from(new Set(this.visibleWorkspaces.map((item) => item.monitorId)));
-    for (const monitorId of monitors) {
-      try {
-        await AeroSpaceUtils.focusMonitor(monitorId);
-        await AeroSpaceUtils.summonWorkspace(`__blank${monitorId}`);
-      } catch (error) {
-        console.error(`Failed to summon blank workspace on monitor ${monitorId}:`, error);
-      }
+  private async hydratePersistedState(): Promise<void> {
+    const persisted = await loadAppState();
+    if (persisted) {
+      this.stateMachine.setState(persisted);
     }
+    await this.syncStashStateFromDisk();
   }
 
-  private async restoreVisibleWorkspaces(): Promise<void> {
-    for (const entry of this.visibleWorkspaces) {
-      try {
-        await AeroSpaceUtils.focusMonitor(entry.monitorId);
-        await AeroSpaceUtils.summonWorkspace(entry.workspace);
-      } catch (error) {
-        console.error(`Failed to restore workspace ${entry.workspace} on monitor ${entry.monitorId}:`, error);
-      }
+  private async syncStashStateFromDisk(): Promise<void> {
+    const stash = await loadGlobalStash();
+    if (!stash) {
+      this.stashSnapshot = null;
+      this.visibleWorkspaces = [];
+      return;
     }
+    this.stashSnapshot = stash.windows.map((window) => ({ id: window.id, workspace: window.workspace }));
+    this.visibleWorkspaces = stash.visibleWorkspaces;
   }
 
   /**

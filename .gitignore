@@ -9,3 +9,5 @@ native/keysender/.swiftpm/
 *.log
 .DS_Store
 .env
+node_modules
+.history

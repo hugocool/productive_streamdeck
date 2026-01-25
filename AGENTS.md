@@ -161,6 +161,14 @@ prompt for Accessibility / Input Monitoring permissions the first time it runs.
 - If the current test tooling does not fit the project, refactor or replace it
   to better match the purpose of the project.
 
+## Stage 0.5 development guardrails
+- All stateful actions must follow Snapshot → Plan → Execute.
+- Plan generation should be pure and deterministic (no side effects).
+- `DRY_RUN=1` must skip mutate steps and still write `debug/last-plan.json`.
+- Persist to `state/globalStash.json` and `state/appState.json` using atomic writes.
+- Avoid `--monitor all` unless explicitly performing a global stash.
+- Prefer `--window-id` operations over focus-dependent commands.
+
 ## Tooling and setup
 Build and run:
 - Build: `npm run build` (TypeScript -> `dist/`)
@@ -193,6 +201,9 @@ Packaging/deploy:
 - Wired PAUSE/RESUME to AeroSpace: snapshot focused windows, move them to
   `STASH`, close interruption windows on resume, and restore stashed windows
   to their original workspaces.
+- Implemented Stage 0.5 plan/execute plumbing: Stream Deck actions now build
+  deterministic plans, execute them via an AeroSpace runner, support `DRY_RUN=1`,
+  and persist `state/globalStash.json` + `state/appState.json` with atomic writes.
 - Added a macOS install script that builds the Node and Swift components,
   creates a minimal `.app` bundle, and bakes in a selected free port plus a
   matching AeroSpace template so local installs avoid port collisions.
