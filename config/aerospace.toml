@@ -1,0 +1,44 @@
+config-version = 2
+
+# Minimal baseline for Productivity OS.
+# Copy to ~/.aerospace.toml and replace app IDs using `aerospace list-apps`.
+
+after-startup-command = []
+
+# Keep key workspaces alive for predictable state transitions.
+persistent-workspaces = ["DEV", "REF", "COMMS", "STASH"]
+
+# Notify the Node controller when the focused workspace changes.
+exec-on-workspace-change = [
+  "/usr/bin/curl", "-s", "http://127.0.0.1:3000/aerospace-event"
+]
+
+# App routing ("gravity") for new windows.
+[[on-window-detected]]
+if.app-id = "com.microsoft.VSCode"
+run = "move-node-to-workspace DEV"
+
+[[on-window-detected]]
+if.app-id = "com.microsoft.edgemac"
+run = "move-node-to-workspace REF"
+
+[[on-window-detected]]
+if.app-id = "com.tinyspeck.slackmacgap"
+run = "move-node-to-workspace COMMS"
+
+[[on-window-detected]]
+if.app-id = "com.raycast.macos"
+run = "move-node-to-workspace COMMS"
+
+# TODO: Replace the bundle IDs below with your installed apps.
+[[on-window-detected]]
+if.app-id = "com.ticktick.task.mac"
+run = "move-node-to-workspace COMMS"
+
+[[on-window-detected]]
+if.app-id = "com.toggl.track"
+run = "move-node-to-workspace COMMS"
+
+[[on-window-detected]]
+if.app-id = "com.cron.calendar"
+run = "move-node-to-workspace COMMS"

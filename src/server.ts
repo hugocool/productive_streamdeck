@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import type { Server } from 'http';
 import { AppState } from './stateMachine';
 
 /**
@@ -7,7 +8,10 @@ import { AppState } from './stateMachine';
 export class StatusServer {
   private app: express.Application;
   private port: number = 3000;
+  private server: Server | null = null;
   private stateGetter: (() => AppState) | null = null;
+  private agentDoneHandler: (() => void) | null = null;
+  private aeroSpaceEventHandler: (() => void) | null = null;
 
   constructor() {
     this.app = express();
@@ -20,6 +24,20 @@ export class StatusServer {
    */
   setStateGetter(getter: () => AppState): void {
     this.stateGetter = getter;
+  }
+
+  /**
+   * Set the handler for agent completion
+   */
+  setAgentDoneHandler(handler: () => void): void {
+    this.agentDoneHandler = handler;
+  }
+
+  /**
+   * Set the handler for AeroSpace events
+   */
+  setAeroSpaceEventHandler(handler: () => void): void {
+    this.aeroSpaceEventHandler = handler;
   }
 
   /**
@@ -38,6 +56,22 @@ export class StatusServer {
         state: currentState,
         timestamp: new Date().toISOString()
       });
+    });
+
+    // Agent done endpoint - triggers a pulse on the AI key
+    this.app.get('/agent-done', (req: Request, res: Response) => {
+      if (this.agentDoneHandler) {
+        this.agentDoneHandler();
+      }
+      res.json({ ok: true });
+    });
+
+    // AeroSpace event endpoint - refreshes Stream Deck state
+    this.app.get('/aerospace-event', (req: Request, res: Response) => {
+      if (this.aeroSpaceEventHandler) {
+        this.aeroSpaceEventHandler();
+      }
+      res.json({ ok: true });
     });
 
     // Ping endpoint - accepts status updates from external agents
@@ -75,14 +109,71 @@ export class StatusServer {
   /**
    * Start the server
    */
-  start(): void {
-    this.app.listen(this.port, () => {
-      console.log(`Status server listening on port ${this.port}`);
-      console.log(`Endpoints available:`);
-      console.log(`  GET  http://localhost:${this.port}/health`);
-      console.log(`  GET  http://localhost:${this.port}/status`);
-      console.log(`  POST http://localhost:${this.port}/ping`);
-      console.log(`  POST http://localhost:${this.port}/update`);
+  async start(preferredPort: number = 3000): Promise<number> {
+    if (this.server) {
+      return this.port;
+    }
+    const maxAttempts = 10;
+    let port = preferredPort;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const server = this.app.listen(port, () => {
+            this.server = server;
+            resolve();
+          });
+          server.on('error', (error: NodeJS.ErrnoException) => {
+            server.close();
+            reject(error);
+          });
+        });
+        this.port = port;
+        this.printEndpoints();
+        if (this.port !== preferredPort) {
+          console.warn(
+            `AeroSpace hook uses port ${preferredPort}; update it to ${this.port} if needed.`
+          );
+        }
+        return this.port;
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'EADDRINUSE') {
+          port += 1;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw new Error(`No free port found after ${maxAttempts} attempts starting at ${preferredPort}`);
+  }
+
+  async stop(): Promise<void> {
+    if (!this.server) {
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      this.server?.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
     });
+    this.server = null;
+  }
+
+  private printEndpoints(): void {
+    console.log(`Status server listening on port ${this.port}`);
+    console.log(`Endpoints available:`);
+    console.log(`  GET  http://localhost:${this.port}/health`);
+    console.log(`  GET  http://localhost:${this.port}/status`);
+    console.log(`  GET  http://localhost:${this.port}/agent-done`);
+    console.log(`  GET  http://localhost:${this.port}/aerospace-event`);
+    console.log(`  POST http://localhost:${this.port}/ping`);
+    console.log(`  POST http://localhost:${this.port}/update`);
   }
 }

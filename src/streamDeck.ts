@@ -1,7 +1,23 @@
+import { execFile } from 'child_process';
+import path from 'path';
 import { openStreamDeck, listStreamDecks, StreamDeck } from '@elgato-stream-deck/node';
-import sharp from 'sharp';
 import { StateMachine, AppState } from './stateMachine';
-import { AeroSpaceUtils } from './aerospace';
+import { AeroSpaceUtils, VisibleWorkspace, WindowSnapshot } from './aerospace';
+import { ensureKeySenderBuilt, getKeySenderPath, parseKeySenderProbe } from './nativeHelper';
+import { EdgeAction, EdgeMode, EDGE_KEYS, getEdgeActions } from './edgeControls';
+
+export type StateAction = 'START' | 'PAUSE' | 'RESUME';
+
+export function transitionState(current: AppState, action: StateAction): AppState | null {
+  if (action === 'START' && current === AppState.IDLE) return AppState.ACTIVE;
+  if (action === 'PAUSE' && current === AppState.ACTIVE) return AppState.PAUSED;
+  if (action === 'RESUME' && current === AppState.PAUSED) return AppState.ACTIVE;
+  return null;
+}
+
+export function shouldRenderEdgeRow(available: boolean): boolean {
+  return available;
+}
 
 /**
  * Stream Deck Controller for 15-key device
@@ -12,21 +28,37 @@ import { AeroSpaceUtils } from './aerospace';
  * 
  * Top-left (0): Lifecycle (START/PAUSE/RESUME)
  * Top-right (4): Agentic AI
+ * Bottom-left (10): Cycle icon + Edge Option+W shortcut
  */
 export class StreamDeckController {
   private device: StreamDeck | null = null;
   private stateMachine: StateMachine;
+  private agentPulseInterval: NodeJS.Timeout | null = null;
+  private agentPulseTimeout: NodeJS.Timeout | null = null;
+  private agentPulseActive = false;
+  private iconSize = 72;
+  private pausedSnapshot: WindowSnapshot[] | null = null;
+  private stashSnapshot: WindowSnapshot[] | null = null;
+  private visibleWorkspaces: VisibleWorkspace[] = [];
+  private edgeShortcutAvailable = false;
+  private edgeMode: EdgeMode = 'NAV';
+  private holdTimers = new Map<number, NodeJS.Timeout>();
+  private holdFired = new Set<number>();
+  private edgeRefreshInterval: NodeJS.Timeout | null = null;
 
   // Key indices
-  private readonly LIFECYCLE_KEY = 0; // Top-left
-  private readonly AI_KEY = 4; // Top-right
+  private readonly PRIMARY_KEY = 0;
+  private readonly STOP_KEY = 1;
+  private readonly AI_KEY = 5;
+  private readonly EDGE_SHORTCUT_KEY = 10; // Bottom-left
+  private readonly FALLBACK_ICON_SIZE = 72;
 
   constructor(stateMachine: StateMachine) {
     this.stateMachine = stateMachine;
     
     // Listen for state changes to update display
     this.stateMachine.addListener((state: AppState) => {
-      this.updateLifecycleButton();
+      this.updateStateButtons();
     });
   }
 
@@ -50,6 +82,7 @@ export class StreamDeckController {
       
       console.log(`Connected to: ${this.device.MODEL}`);
       console.log(`Key count: ${this.device.NUM_KEYS}`);
+      this.iconSize = (this.device as { ICON_SIZE?: number }).ICON_SIZE ?? this.FALLBACK_ICON_SIZE;
       
       // Clear all keys
       await this.device.clearPanel();
@@ -58,8 +91,10 @@ export class StreamDeckController {
       this.setupKeyHandlers();
       
       // Initialize button displays
-      await this.updateLifecycleButton();
+      await this.updateStateButtons();
       await this.updateAIButton();
+      await this.refreshEdgeShortcutAvailability();
+      this.startEdgeRefreshLoop();
       
       console.log('Stream Deck initialized successfully');
     } catch (error) {
@@ -76,7 +111,11 @@ export class StreamDeckController {
     
     this.device.on('down', (keyIndex: number) => {
       console.log(`Key ${keyIndex} pressed`);
-      this.handleKeyPress(keyIndex);
+      this.handleKeyDown(keyIndex);
+    });
+
+    this.device.on('up', (keyIndex: number) => {
+      this.handleKeyUp(keyIndex);
     });
 
     this.device.on('error', (error: unknown) => {
@@ -87,29 +126,97 @@ export class StreamDeckController {
   /**
    * Handle key press events
    */
-  private async handleKeyPress(keyIndex: number): Promise<void> {
+  private async handleKeyDown(keyIndex: number): Promise<void> {
     switch (keyIndex) {
-      case this.LIFECYCLE_KEY:
-        await this.handleLifecyclePress();
+      case this.PRIMARY_KEY:
+        await this.handlePrimaryAction();
+        break;
+      case this.STOP_KEY:
+        await this.handleStopResumeAction();
         break;
       case this.AI_KEY:
         await this.handleAIPress();
         break;
       default:
-        console.log(`Key ${keyIndex} not mapped`);
+        await this.handleEdgeKeyDown(keyIndex);
     }
+  }
+
+  private handleKeyUp(keyIndex: number): void {
+    if (!this.holdTimers.has(keyIndex)) {
+      return;
+    }
+
+    const timer = this.holdTimers.get(keyIndex);
+    if (timer) {
+      clearTimeout(timer);
+    }
+    this.holdTimers.delete(keyIndex);
+
+    if (this.holdFired.has(keyIndex)) {
+      this.holdFired.delete(keyIndex);
+      return;
+    }
+
+    void this.handleEdgeKeyTap(keyIndex);
   }
 
   /**
    * Handle lifecycle button press
    */
-  private async handleLifecyclePress(): Promise<void> {
-    const oldLabel = this.stateMachine.getLifecycleLabel();
-    this.stateMachine.handleLifecyclePress();
-    const newLabel = this.stateMachine.getLifecycleLabel();
-    
-    console.log(`Lifecycle: ${oldLabel} pressed, now showing ${newLabel}`);
-    await this.updateLifecycleButton();
+  private async handlePrimaryAction(): Promise<void> {
+    const current = this.stateMachine.getState();
+    if (current === AppState.IDLE) {
+      await this.handleStateAction('START');
+      return;
+    }
+    if (current === AppState.ACTIVE) {
+      await this.handleStateAction('PAUSE');
+    }
+  }
+
+  private async handleStateAction(action: StateAction): Promise<void> {
+    const previousState = this.stateMachine.getState();
+    const nextState = transitionState(previousState, action);
+    if (!nextState || nextState === previousState) {
+      return;
+    }
+
+    this.stateMachine.setState(nextState);
+    console.log(`Lifecycle: ${previousState} -> ${nextState}`);
+
+    if (previousState === AppState.ACTIVE && nextState === AppState.PAUSED) {
+      this.pausedSnapshot = await AeroSpaceUtils.stashFocusedWindows();
+    }
+
+    if (previousState === AppState.PAUSED && nextState === AppState.ACTIVE) {
+      const strayWindowIds = await AeroSpaceUtils.listWindowIdsFocused();
+      if (strayWindowIds.length > 0) {
+        await AeroSpaceUtils.closeWindows(strayWindowIds);
+      }
+      if (this.pausedSnapshot?.length) {
+        await AeroSpaceUtils.restoreSnapshot(this.pausedSnapshot);
+      }
+      this.pausedSnapshot = null;
+    }
+
+    await this.updateStateButtons();
+  }
+
+  private async handleStopResumeAction(): Promise<void> {
+    if (this.stashSnapshot) {
+      await AeroSpaceUtils.restoreVisibleSnapshot(this.stashSnapshot);
+      await this.restoreVisibleWorkspaces();
+      this.stashSnapshot = null;
+      this.visibleWorkspaces = [];
+      await this.updateStateButtons();
+      return;
+    }
+
+    this.visibleWorkspaces = await AeroSpaceUtils.listVisibleWorkspaces();
+    this.stashSnapshot = await AeroSpaceUtils.stashVisibleWindows('STASH');
+    await this.hideVisibleWorkspaces();
+    await this.updateStateButtons();
   }
 
   /**
@@ -129,33 +236,222 @@ export class StreamDeckController {
   /**
    * Update the lifecycle button display
    */
-  private async updateLifecycleButton(): Promise<void> {
-    const label = this.stateMachine.getLifecycleLabel();
+  private async updateStateButtons(): Promise<void> {
     const state = this.stateMachine.getState();
-    
-    // Choose color based on state
-    let color: string;
-    switch (state) {
-      case AppState.IDLE:
-        color = '#00FF00'; // Green for START
-        break;
-      case AppState.ACTIVE:
-        color = '#FFA500'; // Orange for PAUSE
-        break;
-      case AppState.PAUSED:
-        color = '#0080FF'; // Blue for RESUME
-        break;
+
+    const primaryLabel = state === AppState.ACTIVE ? 'PAUSE' : 'START';
+    const primaryColor = state === AppState.ACTIVE ? '#FFA500' : '#00FF00';
+    const primaryInactive = state === AppState.PAUSED ? '#3A3A3A' : primaryColor;
+    const resumeLabel = this.stashSnapshot ? 'RESUME' : 'STOP';
+    const resumeColor = this.stashSnapshot ? '#0080FF' : '#AA3322';
+
+    await this.drawButton(this.PRIMARY_KEY, primaryLabel, primaryInactive);
+    await this.drawButton(this.STOP_KEY, resumeLabel, resumeColor);
+  }
+
+  private async hideVisibleWorkspaces(): Promise<void> {
+    const monitors = Array.from(new Set(this.visibleWorkspaces.map((item) => item.monitorId)));
+    for (const monitorId of monitors) {
+      try {
+        await AeroSpaceUtils.focusMonitor(monitorId);
+        await AeroSpaceUtils.summonWorkspace(`__blank${monitorId}`);
+      } catch (error) {
+        console.error(`Failed to summon blank workspace on monitor ${monitorId}:`, error);
+      }
     }
-    
-    await this.drawButton(this.LIFECYCLE_KEY, label, color);
+  }
+
+  private async restoreVisibleWorkspaces(): Promise<void> {
+    for (const entry of this.visibleWorkspaces) {
+      try {
+        await AeroSpaceUtils.focusMonitor(entry.monitorId);
+        await AeroSpaceUtils.summonWorkspace(entry.workspace);
+      } catch (error) {
+        console.error(`Failed to restore workspace ${entry.workspace} on monitor ${entry.monitorId}:`, error);
+      }
+    }
   }
 
   /**
    * Update the AI button display
    */
   private async updateAIButton(): Promise<void> {
+    if (this.agentPulseActive) return;
     await this.drawButton(this.AI_KEY, 'AI', '#FF00FF'); // Purple/Magenta
   }
+
+  /**
+   * Update the Edge shortcut button display
+   */
+  private async updateEdgeShortcutButton(): Promise<void> {
+    if (shouldRenderEdgeRow(this.edgeShortcutAvailable)) {
+      await this.drawEdgeRow();
+    } else {
+      await this.clearEdgeRow();
+    }
+  }
+
+  async refreshEdgeShortcutAvailability(): Promise<void> {
+    try {
+      const helperPath = await ensureKeySenderBuilt();
+      const args = ['--bundle-id', 'com.microsoft.edgemac', '--probe', '--require-visible'];
+      const stdout = await new Promise<string>((resolve, reject) => {
+        execFile(helperPath, args, { encoding: 'utf8' }, (error, output) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(output);
+        });
+      });
+
+      const parsed = parseKeySenderProbe(stdout);
+      this.edgeShortcutAvailable = parsed?.visibleOnScreen ?? false;
+    } catch (error) {
+      console.error('Failed to probe Edge visibility:', error);
+      this.edgeShortcutAvailable = false;
+    }
+
+    await this.updateEdgeShortcutButton();
+  }
+
+  private startEdgeRefreshLoop(): void {
+    if (this.edgeRefreshInterval) return;
+    this.edgeRefreshInterval = setInterval(() => {
+      void this.refreshEdgeShortcutAvailability();
+    }, 3000);
+  }
+
+  /**
+   * Pulse the AI button to signal agent completion
+   */
+  async startAgentPulse(durationMs: number): Promise<void> {
+    if (!this.device) return;
+    this.agentPulseActive = true;
+
+    if (this.agentPulseInterval) clearInterval(this.agentPulseInterval);
+    if (this.agentPulseTimeout) clearTimeout(this.agentPulseTimeout);
+
+    let on = false;
+    this.agentPulseInterval = setInterval(() => {
+      on = !on;
+      const color = on ? '#8C00FF' : '#0A0A0A';
+      void this.drawSolidColor(this.AI_KEY, color);
+    }, 250);
+
+    this.agentPulseTimeout = setTimeout(() => {
+      if (this.agentPulseInterval) clearInterval(this.agentPulseInterval);
+      this.agentPulseInterval = null;
+      this.agentPulseTimeout = null;
+      this.agentPulseActive = false;
+      void this.updateAIButton();
+    }, durationMs);
+  }
+
+  /**
+   * Trigger the Edge Option+W shortcut via native helper
+   */
+  private async triggerEdgeShortcut(): Promise<void> {
+    try {
+      await this.sendEdgeShortcut('opt+w');
+    } catch (error) {
+      console.error('Failed to trigger Edge shortcut:', error);
+      console.error('Build helper: (cd native/keysender && swift build -c release)');
+      console.error('If Swift is missing, run: xcode-select --install');
+    }
+  }
+
+  private async handleEdgeKeyDown(keyIndex: number): Promise<void> {
+    if (!this.edgeShortcutAvailable) return;
+    const actions = getEdgeActions(this.edgeMode, keyIndex);
+    if (!actions) return;
+
+    if (actions.hold) {
+      const holdAction = actions.hold;
+      const timer = setTimeout(() => {
+        this.holdFired.add(keyIndex);
+        void this.executeEdgeAction(holdAction);
+      }, 500);
+      this.holdTimers.set(keyIndex, timer);
+      return;
+    }
+
+    void this.handleEdgeKeyTap(keyIndex);
+  }
+
+  private async handleEdgeKeyTap(keyIndex: number): Promise<void> {
+    if (!this.edgeShortcutAvailable) return;
+    const actions = getEdgeActions(this.edgeMode, keyIndex);
+    if (!actions) return;
+
+    await this.executeEdgeAction(actions.tap);
+  }
+
+  private async executeEdgeAction(action: EdgeAction): Promise<void> {
+    if (action.type === 'noop') return;
+    if (action.type === 'mode') {
+      this.edgeMode = action.mode;
+      await this.drawEdgeRow();
+      return;
+    }
+
+    await this.sendEdgeShortcut(action.shortcut);
+    if (this.edgeMode === 'TAB_SWITCH' && (action.shortcut === 'enter' || action.shortcut === 'esc')) {
+      this.edgeMode = 'NAV';
+      await this.drawEdgeRow();
+    }
+  }
+
+  private async drawEdgeRow(): Promise<void> {
+    if (this.edgeMode === 'NAV') {
+      await this.drawButton(EDGE_KEYS.K0_TABS, 'TAB', '#2C3E50');
+      await this.drawButton(EDGE_KEYS.K1_BACK, 'BACK', '#2C3E50');
+      await this.drawButton(EDGE_KEYS.K2_CLOSE, 'CLOSE', '#B23A48');
+      await this.drawButton(EDGE_KEYS.K3_NEW, 'NEW', '#2E8B57');
+      await this.drawButton(EDGE_KEYS.K4_SEARCH, 'SRCH', '#455A64');
+      return;
+    }
+
+    await this.drawButton(EDGE_KEYS.K0_TABS, 'TAB', '#37474F');
+    await this.drawButton(EDGE_KEYS.K1_BACK, 'UP', '#37474F');
+    await this.drawButton(EDGE_KEYS.K2_CLOSE, 'SEL', '#1E88E5');
+    await this.drawButton(EDGE_KEYS.K3_NEW, 'DOWN', '#37474F');
+    await this.drawButton(EDGE_KEYS.K4_SEARCH, 'ESC', '#6D4C41');
+  }
+
+  private async clearEdgeRow(): Promise<void> {
+    await this.drawSolidColor(EDGE_KEYS.K0_TABS, '#000000');
+    await this.drawSolidColor(EDGE_KEYS.K1_BACK, '#000000');
+    await this.drawSolidColor(EDGE_KEYS.K2_CLOSE, '#000000');
+    await this.drawSolidColor(EDGE_KEYS.K3_NEW, '#000000');
+    await this.drawSolidColor(EDGE_KEYS.K4_SEARCH, '#000000');
+  }
+
+  private async sendEdgeShortcut(shortcut: string): Promise<void> {
+    if (!this.edgeShortcutAvailable) {
+      return;
+    }
+    const helperPath = await ensureKeySenderBuilt();
+    const args = [
+      '--bundle-id',
+      'com.microsoft.edgemac',
+      '--shortcut',
+      shortcut,
+      '--require-visible'
+    ];
+
+    await new Promise<void>((resolve, reject) => {
+      execFile(helperPath, args, { encoding: 'utf8' }, (error, stdout) => {
+        if (error) {
+          console.error('KeySender failed:', stdout || error.message);
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
 
   /**
    * Draw a button with text and background color
@@ -175,16 +471,19 @@ export class StreamDeckController {
       
       // Create an SVG with text
       const svg = `
-        <svg width="72" height="72" xmlns="http://www.w3.org/2000/svg">
-          <rect width="72" height="72" fill="${sanitizedColor}"/>
-          <text x="36" y="45" font-family="Arial, sans-serif" font-size="16" font-weight="bold" 
+        <svg width="${this.iconSize}" height="${this.iconSize}" xmlns="http://www.w3.org/2000/svg">
+          <rect width="${this.iconSize}" height="${this.iconSize}" fill="${sanitizedColor}"/>
+          <text x="${this.iconSize / 2}" y="${Math.round(this.iconSize * 0.63)}"
+                font-family="Arial, sans-serif" font-size="16" font-weight="bold"
                 text-anchor="middle" fill="white">${sanitizedText}</text>
         </svg>
       `;
       
       // Convert SVG to buffer
+      const { default: sharp } = await import('sharp');
       const buffer = await sharp(Buffer.from(svg))
-        .resize(72, 72)
+        .resize(this.iconSize, this.iconSize)
+        .removeAlpha()
         .raw()
         .toBuffer();
       
@@ -196,10 +495,74 @@ export class StreamDeckController {
   }
 
   /**
+   * Draw a solid color fill for a key
+   */
+  private async drawSolidColor(keyIndex: number, color: string): Promise<void> {
+    try {
+      const svg = `
+        <svg width="${this.iconSize}" height="${this.iconSize}" xmlns="http://www.w3.org/2000/svg">
+          <rect width="100%" height="100%" fill="${color}"/>
+        </svg>
+      `;
+
+      const { default: sharp } = await import('sharp');
+      const buffer = await sharp(Buffer.from(svg))
+        .resize(this.iconSize, this.iconSize)
+        .removeAlpha()
+        .raw()
+        .toBuffer();
+
+      await this.device!.fillKeyBuffer(keyIndex, buffer);
+    } catch (error) {
+      console.error(`Failed to draw solid color ${keyIndex}:`, error);
+    }
+  }
+
+  /**
+   * Draw a cycle icon with a background
+   */
+  private async drawCycleIcon(keyIndex: number, color: string): Promise<void> {
+    try {
+      const stroke = Math.max(3, Math.round(this.iconSize * 0.08));
+      const center = this.iconSize / 2;
+      const radius = this.iconSize * 0.28;
+      const arrow = this.iconSize * 0.14;
+
+      const svg = `
+        <svg width="${this.iconSize}" height="${this.iconSize}" xmlns="http://www.w3.org/2000/svg">
+          <rect width="100%" height="100%" fill="${color}"/>
+          <g fill="none" stroke="white" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M ${center + radius} ${center} A ${radius} ${radius} 0 1 1 ${center - radius} ${center}"/>
+            <path d="M ${center - radius} ${center}
+                     L ${center - radius + arrow} ${center - arrow * 0.8}
+                     M ${center - radius} ${center}
+                     L ${center - radius + arrow} ${center + arrow * 0.8}"/>
+          </g>
+        </svg>
+      `;
+
+      const { default: sharp } = await import('sharp');
+      const buffer = await sharp(Buffer.from(svg))
+        .resize(this.iconSize, this.iconSize)
+        .removeAlpha()
+        .raw()
+        .toBuffer();
+
+      await this.device!.fillKeyBuffer(keyIndex, buffer);
+    } catch (error) {
+      console.error(`Failed to draw cycle icon ${keyIndex}:`, error);
+    }
+  }
+
+  /**
    * Close the Stream Deck connection
    */
   async close(): Promise<void> {
     if (this.device) {
+      if (this.edgeRefreshInterval) {
+        clearInterval(this.edgeRefreshInterval);
+        this.edgeRefreshInterval = null;
+      }
       await this.device.close();
       console.log('Stream Deck disconnected');
     }

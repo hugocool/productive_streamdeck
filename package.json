@@ -3,12 +3,25 @@
   "version": "1.0.0",
   "description": "Stream Deck controller with state machine and AeroSpace integration",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc",
+    "native:build": "cd native/keysender && swift build -c release",
     "start": "node dist/index.js",
-    "dev": "tsc && node dist/index.js"
+    "dev:base": "concurrently -k \"tsc -w\" \"nodemon --watch dist --delay 200ms dist/index.js\"",
+    "dev": "bash scripts/dev.sh",
+    "test": "npm run build && node test/runTests.mjs",
+    "check:deck": "npm run build && node dist/checkDeck.js",
+    "install:mac": "bash scripts/install-mac.sh",
+    "aerospace:sync": "bash scripts/sync-aerospace.sh"
   },
-  "keywords": ["streamdeck", "elgato", "automation"],
+  "keywords": [
+    "streamdeck",
+    "elgato",
+    "automation"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
@@ -19,6 +32,8 @@
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@types/express": "^4.17.21",
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.4",
     "typescript": "^5.3.3"
   }
 }

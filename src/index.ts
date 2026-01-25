@@ -17,27 +17,41 @@ async function main() {
     // Initialize Express server
     const server = new StatusServer();
     server.setStateGetter(() => stateMachine.getState());
-    server.start();
+    const statusPort = await server.start(Number(process.env.PORT) || 3000);
 
     // Initialize Stream Deck controller
-    const streamDeck = new StreamDeckController(stateMachine);
+    let streamDeck: StreamDeckController | null = null;
     try {
+      streamDeck = new StreamDeckController(stateMachine);
+      server.setAgentDoneHandler(() => {
+        if (streamDeck) void streamDeck.startAgentPulse(10_000);
+      });
+      server.setAeroSpaceEventHandler(() => {
+        if (streamDeck) void streamDeck.refreshEdgeShortcutAvailability();
+      });
       await streamDeck.initialize();
+      const activeStreamDeck = streamDeck;
       console.log('\n=== Application Running ===');
       console.log('Stream Deck Controller: Ready');
-      console.log('Status Server: Running on port 3000');
+      console.log(`Status Server: Running on port ${statusPort}`);
       console.log('Press Ctrl+C to exit\n');
 
       // Graceful shutdown
       process.on('SIGINT', async () => {
         console.log('\n\nShutting down...');
-        await streamDeck.close();
+        await activeStreamDeck.close();
         process.exit(0);
       });
     } catch (streamDeckError) {
+      server.setAgentDoneHandler(() => {
+        console.log('Agent done received (no Stream Deck connected)');
+      });
+      server.setAeroSpaceEventHandler(() => {
+        console.log('AeroSpace event received (no Stream Deck connected)');
+      });
       console.log('\n=== Application Running (No Stream Deck) ===');
       console.log('Stream Deck Controller: Not available (no hardware detected)');
-      console.log('Status Server: Running on port 3000');
+      console.log(`Status Server: Running on port ${statusPort}`);
       console.log('Press Ctrl+C to exit\n');
 
       // Graceful shutdown without Stream Deck

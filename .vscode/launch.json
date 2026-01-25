@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Stream Deck (Root App)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "/Users/hugoevers/.nvm/versions/node/v23.7.0/bin/npm",
+      "runtimeArgs": ["run", "dev"],
+      "preLaunchTask": "aerospace:sync",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "autoAttachChildProcesses": true
+    }
+  ]
+}

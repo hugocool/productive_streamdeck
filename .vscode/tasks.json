@@ -1,0 +1,28 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "PATH=/Users/hugoevers/.nvm/versions/node/v23.7.0/bin:$PATH npm run build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$tsc"
+    },
+    {
+      "label": "dev",
+      "type": "shell",
+      "command": "PATH=/Users/hugoevers/.nvm/versions/node/v23.7.0/bin:$PATH npm run dev",
+      "isBackground": true,
+      "problemMatcher": "$tsc"
+    },
+    {
+      "label": "aerospace:sync",
+      "type": "shell",
+      "command": "PATH=/Users/hugoevers/.nvm/versions/node/v23.7.0/bin:$PATH npm run aerospace:sync",
+      "problemMatcher": []
+    }
+  ]
+}

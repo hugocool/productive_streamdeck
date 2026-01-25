@@ -1,6 +1,11 @@
 node_modules/
 dist/
 build/
+native/keysender/.build/
+native/keysender/.swiftpm/
+.streamdeck-port
+.node-version
+.nvmrc
 *.log
 .DS_Store
 .env
