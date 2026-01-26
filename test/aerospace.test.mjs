@@ -1,7 +1,15 @@
 import test from './testHarness.mjs';
 import assert from 'assert';
 
-import { diffWindowIds, parseWindowListJson, buildListWindowsArgs, buildMoveToWorkspaceArgs, parseVisibleWorkspaces } from '../dist/aerospace.js';
+import {
+  diffWindowIds,
+  parseWindowListJson,
+  parseWindowListFormat,
+  buildListWindowsArgs,
+  buildMoveToWorkspaceArgs,
+  parseVisibleWorkspaces,
+  parseVisibleWorkspacesJson
+} from '../dist/aerospace.js';
 
 test('diffWindowIds returns items in after not present in before', () => {
   assert.deepEqual(diffWindowIds([1, 2], [2, 3, 4]), [3, 4]);
@@ -41,6 +49,14 @@ test('parseWindowListJson parses window snapshots', () => {
   });
 });
 
+test('parseWindowListFormat parses id/workspace pairs', () => {
+  const raw = '24048\tDEV\n39576\tREF\n';
+  assert.deepEqual(parseWindowListFormat(raw), [
+    { id: 24048, workspace: 'DEV' },
+    { id: 39576, workspace: 'REF' }
+  ]);
+});
+
 test('buildListWindowsArgs uses focused workspace and monitor', () => {
   assert.deepEqual(buildListWindowsArgs('focused'), ['list-windows', '--monitor', 'focused', '--workspace', 'focused', '--json']);
   assert.deepEqual(buildListWindowsArgs('all'), ['list-windows', '--all', '--json']);
@@ -53,6 +69,19 @@ test('buildMoveToWorkspaceArgs orders window-id before workspace', () => {
 test('parseVisibleWorkspaces parses monitor/workspace pairs', () => {
   const raw = '1\tDEV\n2\tREF\n';
   assert.deepEqual(parseVisibleWorkspaces(raw), [
+    { monitorId: '1', workspace: 'DEV' },
+    { monitorId: '2', workspace: 'REF' }
+  ]);
+});
+
+test('parseVisibleWorkspacesJson handles wrapped arrays', () => {
+  const raw = JSON.stringify({
+    workspaces: [
+      { 'monitor-id': 1, workspace: 'DEV' },
+      { monitorId: '2', workspace: 'REF' }
+    ]
+  });
+  assert.deepEqual(parseVisibleWorkspacesJson(raw), [
     { monitorId: '1', workspace: 'DEV' },
     { monitorId: '2', workspace: 'REF' }
   ]);

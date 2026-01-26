@@ -1,0 +1,65 @@
+{
+  "version": 2,
+  "updatedAt": "2026-01-26T10:14:34.081Z",
+  "stack": [
+    {
+      "id": "stash_1769422474081",
+      "createdAt": "2026-01-26T10:14:34.081Z",
+      "scope": {
+        "kind": "task",
+        "taskId": "scratch"
+      },
+      "windows": [],
+      "visibleWorkspacesByMonitor": {}
+    },
+    {
+      "id": "stash_1769386028699",
+      "createdAt": "2026-01-26T00:07:08.699Z",
+      "scope": {
+        "kind": "task",
+        "taskId": "scratch"
+      },
+      "windows": [],
+      "visibleWorkspacesByMonitor": {}
+    },
+    {
+      "id": "stash_1769385077122",
+      "createdAt": "2026-01-25T23:51:17.122Z",
+      "scope": {
+        "kind": "task",
+        "taskId": "adhoc"
+      },
+      "windows": [],
+      "visibleWorkspacesByMonitor": {}
+    },
+    {
+      "id": "stash_1769385076683",
+      "createdAt": "2026-01-25T23:51:16.683Z",
+      "scope": {
+        "kind": "task",
+        "taskId": "adhoc"
+      },
+      "windows": [],
+      "visibleWorkspacesByMonitor": {}
+    },
+    {
+      "id": "stash_1769384891373",
+      "createdAt": "2026-01-25T23:48:11.373Z",
+      "scope": {
+        "kind": "task",
+        "taskId": "misc"
+      },
+      "windows": [],
+      "visibleWorkspacesByMonitor": {}
+    },
+    {
+      "id": "stash_1769384873131",
+      "createdAt": "2026-01-25T23:47:53.131Z",
+      "scope": {
+        "kind": "visible"
+      },
+      "windows": [],
+      "visibleWorkspacesByMonitor": {}
+    }
+  ]
+}

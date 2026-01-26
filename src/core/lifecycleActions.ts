@@ -3,7 +3,7 @@ import { LifecycleAction, LifecycleState } from '../lifecycle';
 import { loadStashStack, loadTaskRegistry } from './persistence';
 import { executePlan } from './executePlan';
 import { planPauseLifecycle, planResumeLifecycle, planStartLifecycle, planStopLifecycle } from './lifecyclePlans';
-import { readVisibleSnapshot, readWorkspaceSnapshot } from './taskSnapshot';
+import { tryReadVisibleSnapshot, tryReadWorkspaceSnapshot } from './taskSnapshot';
 import { taskWs } from './taskWorkspaces';
 
 export async function runLifecycleAction(
@@ -20,9 +20,10 @@ export async function runLifecycleAction(
       console.warn('No selected task; cannot start.');
       return null;
     }
-    const snapshot = await readVisibleSnapshot(runner, {
+    const snapshot = await tryReadVisibleSnapshot(runner, {
       excludeWorkspaces: [taskWs(state.selectedTaskId)]
     });
+    if (!snapshot) return null;
     const result = planStartLifecycle(state, snapshot, stash, registry);
     if (!result) return null;
     await executePlan(result.plan, runner, options);
@@ -34,7 +35,8 @@ export async function runLifecycleAction(
       console.warn('No active task; cannot pause.');
       return null;
     }
-    const taskSnapshot = await readWorkspaceSnapshot(runner, taskWs(state.activeTaskId));
+    const taskSnapshot = await tryReadWorkspaceSnapshot(runner, taskWs(state.activeTaskId));
+    if (!taskSnapshot) return null;
     const result = planPauseLifecycle(state, taskSnapshot, stash);
     if (!result) return null;
     await executePlan(result.plan, runner, options);
@@ -46,9 +48,10 @@ export async function runLifecycleAction(
       console.warn('No active task; cannot resume.');
       return null;
     }
-    const snapshot = await readVisibleSnapshot(runner, {
+    const snapshot = await tryReadVisibleSnapshot(runner, {
       excludeWorkspaces: [taskWs(state.activeTaskId)]
     });
+    if (!snapshot) return null;
     const result = planResumeLifecycle(state, snapshot, stash, registry);
     if (!result) return null;
     await executePlan(result.plan, runner, options);
@@ -60,7 +63,8 @@ export async function runLifecycleAction(
       console.warn('No active task; cannot stop.');
       return null;
     }
-    const taskSnapshot = await readWorkspaceSnapshot(runner, taskWs(state.activeTaskId));
+    const taskSnapshot = await tryReadWorkspaceSnapshot(runner, taskWs(state.activeTaskId));
+    if (!taskSnapshot) return null;
     const result = planStopLifecycle(state, taskSnapshot, stash, registry);
     if (!result) return null;
     await executePlan(result.plan, runner, options);

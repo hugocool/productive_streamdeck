@@ -1,0 +1,190 @@
+{
+  "id": "plan_1769423189379",
+  "createdAt": "2026-01-26T10:26:29.379Z",
+  "steps": [
+    {
+      "tool": "aerospace",
+      "kind": "mutate",
+      "args": [
+        "focus-monitor",
+        "1"
+      ]
+    },
+    {
+      "tool": "aerospace",
+      "kind": "mutate",
+      "args": [
+        "summon-workspace",
+        "__blank1"
+      ]
+    },
+    {
+      "tool": "aerospace",
+      "kind": "mutate",
+      "args": [
+        "focus-monitor",
+        "3"
+      ]
+    },
+    {
+      "tool": "aerospace",
+      "kind": "mutate",
+      "args": [
+        "summon-workspace",
+        "__blank3"
+      ]
+    },
+    {
+      "tool": "aerospace",
+      "kind": "mutate",
+      "args": [
+        "summon-workspace",
+        "task:adhoc-003"
+      ]
+    }
+  ],
+  "effects": [
+    {
+      "type": "persist",
+      "target": "globalStash",
+      "payload": {
+        "version": 2,
+        "updatedAt": "2026-01-26T10:26:29.379Z",
+        "stack": [
+          {
+            "id": "stash_1769423189379",
+            "createdAt": "2026-01-26T10:26:29.379Z",
+            "scope": {
+              "kind": "visible"
+            },
+            "windows": [],
+            "visibleWorkspacesByMonitor": {
+              "1": "DEV",
+              "3": "1"
+            }
+          },
+          {
+            "id": "stash_1769422474081",
+            "createdAt": "2026-01-26T10:14:34.081Z",
+            "scope": {
+              "kind": "task",
+              "taskId": "scratch"
+            },
+            "windows": [],
+            "visibleWorkspacesByMonitor": {}
+          },
+          {
+            "id": "stash_1769386028699",
+            "createdAt": "2026-01-26T00:07:08.699Z",
+            "scope": {
+              "kind": "task",
+              "taskId": "scratch"
+            },
+            "windows": [],
+            "visibleWorkspacesByMonitor": {}
+          },
+          {
+            "id": "stash_1769385077122",
+            "createdAt": "2026-01-25T23:51:17.122Z",
+            "scope": {
+              "kind": "task",
+              "taskId": "adhoc"
+            },
+            "windows": [],
+            "visibleWorkspacesByMonitor": {}
+          },
+          {
+            "id": "stash_1769385076683",
+            "createdAt": "2026-01-25T23:51:16.683Z",
+            "scope": {
+              "kind": "task",
+              "taskId": "adhoc"
+            },
+            "windows": [],
+            "visibleWorkspacesByMonitor": {}
+          },
+          {
+            "id": "stash_1769384891373",
+            "createdAt": "2026-01-25T23:48:11.373Z",
+            "scope": {
+              "kind": "task",
+              "taskId": "misc"
+            },
+            "windows": [],
+            "visibleWorkspacesByMonitor": {}
+          },
+          {
+            "id": "stash_1769384873131",
+            "createdAt": "2026-01-25T23:47:53.131Z",
+            "scope": {
+              "kind": "visible"
+            },
+            "windows": [],
+            "visibleWorkspacesByMonitor": {}
+          }
+        ]
+      }
+    },
+    {
+      "type": "persist",
+      "target": "taskRegistry",
+      "payload": {
+        "version": 1,
+        "updatedAt": "2026-01-26T10:26:29.379Z",
+        "tasks": {
+          "adhoc": {
+            "createdAt": "2026-01-25T23:47:56.545Z",
+            "updatedAt": "2026-01-26T10:25:24.078Z",
+            "lastStopStashId": "stash_1769385077122"
+          },
+          "misc": {
+            "createdAt": "2026-01-25T23:48:06.630Z",
+            "updatedAt": "2026-01-26T00:06:57.896Z",
+            "lastStopStashId": "stash_1769386017896"
+          },
+          "scratch": {
+            "createdAt": "2026-01-26T00:07:07.315Z",
+            "updatedAt": "2026-01-26T10:14:34.082Z",
+            "lastStopStashId": "stash_1769422474081"
+          },
+          "adhoc-001": {
+            "createdAt": "2026-01-26T10:14:39.180Z",
+            "updatedAt": "2026-01-26T10:25:25.077Z"
+          },
+          "adhoc-002": {
+            "createdAt": "2026-01-26T10:14:42.541Z",
+            "updatedAt": "2026-01-26T10:25:25.557Z"
+          },
+          "adhoc-003": {
+            "createdAt": "2026-01-26T10:14:44.781Z",
+            "updatedAt": "2026-01-26T10:26:29.379Z"
+          },
+          "adhoc-004": {
+            "createdAt": "2026-01-26T10:16:04.547Z",
+            "updatedAt": "2026-01-26T10:16:04.547Z"
+          },
+          "adhoc-005": {
+            "createdAt": "2026-01-26T10:16:05.186Z",
+            "updatedAt": "2026-01-26T10:16:05.186Z"
+          },
+          "adhoc-006": {
+            "createdAt": "2026-01-26T10:25:21.616Z",
+            "updatedAt": "2026-01-26T10:25:21.616Z"
+          }
+        },
+        "lastCheckoutTaskId": "adhoc-003"
+      }
+    },
+    {
+      "type": "persist",
+      "target": "appState",
+      "payload": {
+        "version": 1,
+        "lifecycle": "RUNNING",
+        "selectedTaskId": "adhoc-003",
+        "activeTaskId": "adhoc-003",
+        "ambientStashId": "stash_1769423189379"
+      }
+    }
+  ]
+}

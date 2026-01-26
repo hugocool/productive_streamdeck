@@ -1,7 +1,7 @@
 import test from './testHarness.mjs';
 import assert from 'assert';
 
-import { filterVisibleSnapshot } from '../dist/core/taskSnapshot.js';
+import { extractWorkspaceNames, filterVisibleSnapshot } from '../dist/core/taskSnapshot.js';
 
 test('filterVisibleSnapshot excludes windows and workspaces', () => {
   const snapshot = {
@@ -18,4 +18,13 @@ test('filterVisibleSnapshot excludes windows and workspaces', () => {
   const filtered = filterVisibleSnapshot(snapshot, ['task:alpha']);
   assert.deepEqual(filtered.windows.map((window) => window.id), [2]);
   assert.deepEqual(filtered.visibleWorkspacesByMonitor, { '2': 'REF' });
+});
+
+test('extractWorkspaceNames reads workspace-only JSON', () => {
+  const raw = JSON.stringify([
+    { workspace: '1' },
+    { workspace: '2' },
+    { workspace: 'DEV' }
+  ]);
+  assert.deepEqual(extractWorkspaceNames(raw), ['1', '2', 'DEV']);
 });

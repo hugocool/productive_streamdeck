@@ -40,7 +40,7 @@ Expected: no actual window moves (dry run), but plans are created.
 2. Open a few windows across monitors.
 3. Press **STOP** (button 1).
    - Visible windows should disappear.
-   - Blank workspaces should appear (`__blank{monitorId}`).
+   - Blank workspaces should appear (`blank-{monitorId}`).
 4. Press **RESUME** (button 1).
    - Windows return to their original workspaces.
    - Original visible workspaces return.

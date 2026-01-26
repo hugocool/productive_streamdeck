@@ -102,6 +102,21 @@ export class AeroSpaceUtils {
     }
   }
 
+  static parseWindowListFormat(raw: string): WindowSnapshot[] {
+    const lines = raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const results: WindowSnapshot[] = [];
+    for (const line of lines) {
+      const [idRaw, workspaceRaw] = line.split(/\s+/);
+      const id = Number(idRaw);
+      if (!Number.isFinite(id) || !workspaceRaw) continue;
+      results.push({ id, workspace: workspaceRaw });
+    }
+    return results;
+  }
+
   static parseVisibleWorkspaces(raw: string): VisibleWorkspace[] {
     const lines = raw
       .split('\n')
@@ -112,18 +127,35 @@ export class AeroSpaceUtils {
     for (const line of lines) {
       const [monitorId, workspace] = line.split(/\s+/);
       if (!monitorId || !workspace) continue;
-      results.push({ monitorId, workspace });
+      const normalizedMonitorId = monitorId.replace(/[^0-9]/g, '');
+      if (!normalizedMonitorId) continue;
+      const cleanedWorkspace = workspace.replace(/["',]/g, '');
+      if (!cleanedWorkspace) continue;
+      results.push({ monitorId: normalizedMonitorId, workspace: cleanedWorkspace });
     }
     return results;
   }
 
   static parseVisibleWorkspacesJson(raw: string): VisibleWorkspace[] {
     try {
-      const parsed = JSON.parse(raw) as WorkspaceListEntry[];
-      if (!Array.isArray(parsed)) return [];
+      const parsed = JSON.parse(raw) as unknown;
+      let entries: WorkspaceListEntry[] = [];
+      if (Array.isArray(parsed)) {
+        entries = parsed as WorkspaceListEntry[];
+      } else if (parsed && typeof parsed === 'object') {
+        const record = parsed as Record<string, unknown>;
+        const candidate =
+          (Array.isArray(record.workspaces) && record.workspaces) ||
+          (Array.isArray(record.items) && record.items) ||
+          (Array.isArray(record.data) && record.data) ||
+          [];
+        entries = candidate as WorkspaceListEntry[];
+      }
+
+      if (!Array.isArray(entries) || entries.length === 0) return [];
       const results: VisibleWorkspace[] = [];
 
-      for (const entry of parsed) {
+      for (const entry of entries) {
         const monitorId =
           typeof entry['monitor-id'] === 'string'
             ? entry['monitor-id']
@@ -145,7 +177,9 @@ export class AeroSpaceUtils {
                 : '';
 
         if (!monitorId || !workspace) continue;
-        results.push({ monitorId, workspace });
+        const normalizedMonitorId = monitorId.replace(/[^0-9]/g, '');
+        if (!normalizedMonitorId) continue;
+        results.push({ monitorId: normalizedMonitorId, workspace });
       }
 
       return results;
@@ -357,6 +391,7 @@ export class AeroSpaceUtils {
 }
 
 export const parseWindowListJson = AeroSpaceUtils.parseWindowListJson;
+export const parseWindowListFormat = AeroSpaceUtils.parseWindowListFormat;
 export const diffWindowIds = AeroSpaceUtils.diffWindowIds;
 export const buildListWindowsArgs = AeroSpaceUtils.buildListWindowsArgs;
 export const buildMoveToWorkspaceArgs = AeroSpaceUtils.buildMoveToWorkspaceArgs;

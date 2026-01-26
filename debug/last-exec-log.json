@@ -1,0 +1,16 @@
+{
+  "planId": "plan_1769423126215",
+  "startedAt": "2026-01-26T10:25:26.216Z",
+  "dryRun": false,
+  "steps": [
+    {
+      "args": [
+        "summon-workspace",
+        "task:adhoc-003"
+      ],
+      "skipped": false
+    }
+  ],
+  "effectsApplied": true,
+  "captures": {}
+}

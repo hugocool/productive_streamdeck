@@ -5,12 +5,17 @@ import { LifecycleAction } from './lifecycle';
 import { AeroSpaceUtils } from './aerospace';
 import { RealRunner } from './adapters/aerospaceRunner';
 import { executePlan } from './core/executePlan';
-import { readVisibleSnapshot } from './core/taskSnapshot';
+import { tryReadVisibleSnapshot } from './core/taskSnapshot';
 import { planStashPop, planStashPush } from './core/plans';
 import { loadLifecycleState, loadStashStack, StashStackStateV2 } from './core/persistence';
 import { runLifecycleAction } from './core/lifecycleActions';
 import { createKeySenderClient } from './appShortcuts';
 import { EdgeAction, EdgeMode, EDGE_KEYS, getEdgeActions } from './edgeControls';
+import { DEFAULT_TASK_IDS, formatTaskLabel, generateLocalTaskId } from './taskSelection';
+import { loadTaskRegistry } from './core/persistence';
+import { planSelectTaskAndCheckout, planDetachTaskToInbox } from './core/viewPlans';
+import { tryReadWorkspaceSnapshot } from './core/taskSnapshot';
+import { BLANK_PREFIX, taskWs } from './core/taskWorkspaces';
 
 export function shouldRenderEdgeRow(available: boolean): boolean {
   return available;
@@ -43,10 +48,19 @@ export class StreamDeckController {
   private runner = new RealRunner();
   private dryRun = process.env.DRY_RUN === '1';
   private keySender = createKeySenderClient();
+  private uiLayer: 'MAIN' | 'VIEW' = 'MAIN';
+  private viewPage = 0;
+  private viewTaskIds: string[] = [];
 
   // Key indices
   private readonly PRIMARY_KEY = 0;
   private readonly STOP_KEY = 1;
+  private readonly TASK_KEY = 2;
+  private readonly VIEW_ESC_KEY = 4;
+  private readonly VIEW_PREV_KEY = 1;
+  private readonly VIEW_NEXT_KEY = 3;
+  private readonly VIEW_NEW_KEY = 0;
+  private readonly VIEW_ENTRY_KEYS = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
   private readonly AI_KEY = 5;
   private readonly EDGE_SHORTCUT_KEY = 10; // Bottom-left
   private readonly FALLBACK_ICON_SIZE = 72;
@@ -56,7 +70,10 @@ export class StreamDeckController {
     
     // Listen for state changes to update display
     this.lifecycleStore.addListener(() => {
-      void this.updateStateButtons();
+      // Never let MAIN UI repaint over the VIEW layer.
+      if (this.uiLayer === 'MAIN') {
+        void this.updateStateButtons();
+      }
     });
   }
 
@@ -91,6 +108,7 @@ export class StreamDeckController {
       // Initialize button displays
       await this.hydratePersistedState();
       await this.updateStateButtons();
+      await this.updateTaskButton();
       await this.updateAIButton();
       await this.refreshEdgeShortcutAvailability();
       this.startEdgeRefreshLoop();
@@ -110,11 +128,15 @@ export class StreamDeckController {
     
     this.device.on('down', (keyIndex: number) => {
       console.log(`Key ${keyIndex} pressed`);
-      this.handleKeyDown(keyIndex);
+      void this.handleKeyDown(keyIndex).catch((error) => {
+        console.error('Key handler failed:', error);
+      });
     });
 
     this.device.on('up', (keyIndex: number) => {
-      this.handleKeyUp(keyIndex);
+      void this.handleKeyUp(keyIndex).catch((error) => {
+        console.error('Key up handler failed:', error);
+      });
     });
 
     this.device.on('error', (error: unknown) => {
@@ -126,12 +148,20 @@ export class StreamDeckController {
    * Handle key press events
    */
   private async handleKeyDown(keyIndex: number): Promise<void> {
+    if (this.uiLayer === 'VIEW') {
+      await this.handleViewKeyDown(keyIndex);
+      return;
+    }
+
     switch (keyIndex) {
       case this.PRIMARY_KEY:
         await this.handlePrimaryAction();
         break;
       case this.STOP_KEY:
         await this.handleStopResumeAction();
+        break;
+      case this.TASK_KEY:
+        await this.enterOrExitView();
         break;
       case this.AI_KEY:
         await this.handleAIPress();
@@ -141,7 +171,7 @@ export class StreamDeckController {
     }
   }
 
-  private handleKeyUp(keyIndex: number): void {
+  private async handleKeyUp(keyIndex: number): Promise<void> {
     if (!this.holdTimers.has(keyIndex)) {
       return;
     }
@@ -157,7 +187,12 @@ export class StreamDeckController {
       return;
     }
 
-    void this.handleEdgeKeyTap(keyIndex);
+    if (this.uiLayer === 'VIEW') {
+      await this.handleViewKeyTap(keyIndex);
+      return;
+    }
+
+    await this.handleEdgeKeyTap(keyIndex);
   }
 
   /**
@@ -201,11 +236,16 @@ export class StreamDeckController {
       await executePlan(plan, this.runner, { dryRun: this.dryRun });
       await this.syncStashStateFromDisk();
       await this.updateStateButtons();
+      await this.updateTaskButton();
       return;
     }
 
-    const snapshot = await readVisibleSnapshot(this.runner);
-    const { plan } = planStashPush({ kind: 'visible' }, snapshot, this.stashStack, 'STASH', '__blank');
+    const snapshot = await tryReadVisibleSnapshot(this.runner);
+    if (!snapshot) {
+      console.warn('Skipping stash: AeroSpace snapshot unavailable.');
+      return;
+    }
+    const { plan } = planStashPush({ kind: 'visible' }, snapshot, this.stashStack, 'STASH', BLANK_PREFIX);
     await executePlan(plan, this.runner, { dryRun: this.dryRun });
     await this.syncStashStateFromDisk();
     await this.updateStateButtons();
@@ -229,6 +269,9 @@ export class StreamDeckController {
    * Update the lifecycle button display
    */
   private async updateStateButtons(): Promise<void> {
+    if (this.uiLayer !== 'MAIN') {
+      return;
+    }
     const state = this.lifecycleStore.getState();
 
     let primaryLabel = 'START';
@@ -254,9 +297,35 @@ export class StreamDeckController {
     await this.drawButton(this.STOP_KEY, stopLabel, stopColor);
   }
 
+  private async updateTaskButton(): Promise<void> {
+    if (this.uiLayer !== 'MAIN') {
+      return;
+    }
+    const state = this.lifecycleStore.getState();
+    const label = this.uiLayer === 'MAIN' ? 'VIEW' : 'VIEW';
+    const color = state.selectedTaskId ? '#1565C0' : '#455A64';
+    await this.drawButton(this.TASK_KEY, label, color);
+  }
+
   private async hydratePersistedState(): Promise<void> {
     const persisted = await loadLifecycleState();
-    this.lifecycleStore.setState(persisted);
+    const nextState = { ...persisted };
+    if (!nextState.selectedTaskId) {
+      nextState.selectedTaskId = DEFAULT_TASK_IDS[0];
+    }
+    this.lifecycleStore.setState(nextState);
+    if (!persisted.selectedTaskId && nextState.selectedTaskId) {
+      await executePlan(
+        {
+          id: `plan_${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          steps: [],
+          effects: [{ type: 'persist', target: 'appState', payload: nextState }]
+        },
+        this.runner,
+        { dryRun: this.dryRun }
+      );
+    }
     await this.syncStashStateFromDisk();
   }
 
@@ -272,10 +341,187 @@ export class StreamDeckController {
     await this.drawButton(this.AI_KEY, 'AI', '#FF00FF'); // Purple/Magenta
   }
 
+  private async enterOrExitView(): Promise<void> {
+    const state = this.lifecycleStore.getState();
+    if (state.lifecycle !== 'IDLE') {
+      console.warn('View layer is blocked while running. Stop first.');
+      return;
+    }
+
+    if (this.uiLayer === 'VIEW') {
+      await this.exitView();
+      return;
+    }
+
+    await this.enterView();
+  }
+
+  private async enterView(): Promise<void> {
+    this.uiLayer = 'VIEW';
+    this.viewPage = 0;
+    const registry = await loadTaskRegistry();
+    const merged = new Set<string>([...DEFAULT_TASK_IDS, ...Object.keys(registry.tasks)]);
+    this.viewTaskIds = [...merged].sort((a, b) => a.localeCompare(b));
+    await this.device?.clearPanel();
+    await this.renderView();
+  }
+
+  private async exitView(): Promise<void> {
+    this.uiLayer = 'MAIN';
+    await this.device?.clearPanel();
+    await this.updateStateButtons();
+    await this.updateTaskButton();
+    await this.updateAIButton();
+    await this.refreshEdgeShortcutAvailability();
+  }
+
+  private pagedTaskIds(): string[] {
+    const pageSize = this.VIEW_ENTRY_KEYS.length;
+    const start = this.viewPage * pageSize;
+    return this.viewTaskIds.slice(start, start + pageSize);
+  }
+
+  private pageCount(): number {
+    const pageSize = this.VIEW_ENTRY_KEYS.length;
+    return Math.max(1, Math.ceil(this.viewTaskIds.length / pageSize));
+  }
+
+  private async renderView(): Promise<void> {
+    const count = this.pageCount();
+    const page = Math.min(this.viewPage, count - 1);
+    this.viewPage = page;
+
+    await this.drawButton(this.VIEW_NEW_KEY, 'NEW', '#2E7D32');
+    await this.drawButton(this.VIEW_PREV_KEY, 'PREV', '#37474F');
+    await this.drawButton(this.TASK_KEY, `P${page + 1}/${count}`, '#455A64');
+    await this.drawButton(this.VIEW_NEXT_KEY, 'NEXT', '#37474F');
+    await this.drawButton(this.VIEW_ESC_KEY, 'ESC', '#6D4C41');
+
+    const entries = this.pagedTaskIds();
+    const selected = this.lifecycleStore.getState().selectedTaskId;
+
+    for (let i = 0; i < this.VIEW_ENTRY_KEYS.length; i += 1) {
+      const keyIndex = this.VIEW_ENTRY_KEYS[i];
+      const taskId = entries[i];
+      if (!taskId) {
+        await this.drawSolidColor(keyIndex, '#000000');
+        continue;
+      }
+      const color = taskId === selected ? '#2E7D32' : '#263238';
+      await this.drawButton(keyIndex, formatTaskLabel(taskId), color);
+    }
+  }
+
+  private async handleViewKeyDown(keyIndex: number): Promise<void> {
+    // VIEW layer owns the whole deck; ESC is the single exit key.
+    if (keyIndex === this.VIEW_ESC_KEY) {
+      await this.exitView();
+      return;
+    }
+    if (keyIndex === this.VIEW_PREV_KEY) {
+      this.viewPage = (this.viewPage - 1 + this.pageCount()) % this.pageCount();
+      await this.renderView();
+      return;
+    }
+    if (keyIndex === this.VIEW_NEXT_KEY) {
+      this.viewPage = (this.viewPage + 1) % this.pageCount();
+      await this.renderView();
+      return;
+    }
+    if (keyIndex === this.VIEW_NEW_KEY) {
+      await this.createNewTask();
+      return;
+    }
+    // Key 2 is a passive page indicator in VIEW.
+    if (keyIndex === this.TASK_KEY) {
+      return;
+    }
+
+    const idx = this.VIEW_ENTRY_KEYS.indexOf(keyIndex);
+    if (idx === -1) return;
+    const entries = this.pagedTaskIds();
+    const taskId = entries[idx];
+    if (!taskId) return;
+
+    const timer = setTimeout(() => {
+      this.holdFired.add(keyIndex);
+      void this.detachTask(taskId);
+    }, 650);
+    this.holdTimers.set(keyIndex, timer);
+  }
+
+  private async handleViewKeyTap(keyIndex: number): Promise<void> {
+    const idx = this.VIEW_ENTRY_KEYS.indexOf(keyIndex);
+    if (idx === -1) return;
+    const entries = this.pagedTaskIds();
+    const taskId = entries[idx];
+    if (!taskId) return;
+    await this.selectTask(taskId);
+  }
+
+  private async selectTask(taskId: string): Promise<void> {
+    console.log(`[VIEW] Selecting task '${taskId}' (checkout + exit)`);
+    const state = this.lifecycleStore.getState();
+    const registry = await loadTaskRegistry();
+    const plan = planSelectTaskAndCheckout(taskId, state, registry);
+    try {
+      await executePlan(plan, this.runner, { dryRun: this.dryRun });
+    } catch (error) {
+      console.error('Failed to checkout task:', error);
+      return;
+    }
+    const nextState = await loadLifecycleState();
+    this.lifecycleStore.setState(nextState);
+    // Selecting a task from VIEW is "checkout and go": exit the layer.
+    await this.exitView();
+  }
+
+  private async createNewTask(): Promise<void> {
+    const registry = await loadTaskRegistry();
+    const existing = new Set<string>([...DEFAULT_TASK_IDS, ...Object.keys(registry.tasks)]);
+    const newId = generateLocalTaskId([...existing], 'adhoc');
+    console.log(`[VIEW] Creating new task '${newId}'`);
+    await this.selectTask(newId);
+  }
+
+  private async detachTask(taskId: string): Promise<void> {
+    const state = this.lifecycleStore.getState();
+    if (state.lifecycle !== 'IDLE') {
+      console.warn('Detach blocked while running. Stop first.');
+      return;
+    }
+    const registry = await loadTaskRegistry();
+    const snapshot = await tryReadWorkspaceSnapshot(this.runner, taskWs(taskId));
+    if (!snapshot) {
+      console.warn('Skipping detach: AeroSpace snapshot unavailable.');
+      return;
+    }
+    const windowIds = snapshot.windows.map((w) => w.id);
+    const fallback = DEFAULT_TASK_IDS.find((id) => id !== taskId) ?? DEFAULT_TASK_IDS[0];
+    const plan = planDetachTaskToInbox(taskId, windowIds, state, registry, fallback);
+    try {
+      await executePlan(plan, this.runner, { dryRun: this.dryRun });
+    } catch (error) {
+      console.error('Failed to detach task:', error);
+      return;
+    }
+
+    const nextState = await loadLifecycleState();
+    this.lifecycleStore.setState(nextState);
+    const nextRegistry = await loadTaskRegistry();
+    const merged = new Set<string>([...DEFAULT_TASK_IDS, ...Object.keys(nextRegistry.tasks)]);
+    this.viewTaskIds = [...merged].sort((a, b) => a.localeCompare(b));
+    await this.renderView();
+    await this.updateTaskButton();
+  }
+
   /**
    * Update the Edge shortcut button display
    */
   private async updateEdgeShortcutButton(): Promise<void> {
+    if (this.uiLayer !== 'MAIN') {
+      return;
+    }
     if (shouldRenderEdgeRow(this.edgeShortcutAvailable)) {
       await this.drawEdgeRow();
     } else {
@@ -310,6 +556,7 @@ export class StreamDeckController {
    */
   async startAgentPulse(durationMs: number): Promise<void> {
     if (!this.device) return;
+    if (this.uiLayer !== 'MAIN') return;
     this.agentPulseActive = true;
 
     if (this.agentPulseInterval) clearInterval(this.agentPulseInterval);
@@ -412,6 +659,9 @@ export class StreamDeckController {
 
   private async sendEdgeShortcut(shortcut: string): Promise<void> {
     if (!this.edgeShortcutAvailable) {
+      return;
+    }
+    if (this.uiLayer !== 'MAIN') {
       return;
     }
     await this.keySender.sendShortcutToApp({

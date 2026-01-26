@@ -4,12 +4,23 @@ A Node.js TypeScript application for controlling a 15-key Elgato Stream Deck on
 macOS, with a lightweight state machine, AeroSpace integration, and an HTTP
 status server for external callbacks.
 
+## Index
+- Agent instructions / decisions: `AGENTS.md`
+- Module-level agent notes: `src/AGENTS.md`
+- Testing (stash stack + plumbing): `TESTING.md`
+- Testing (tasks as branches): `STAGE2_TESTING.md`
+- Testing (lifecycle + view layer): `STAGE3_TESTING.md`
+- Roadmap (TickTick/Notion): `roadmap.md`
+- AeroSpace template config: `config/aerospace.toml`
+- AeroSpace config sync script: `scripts/sync-aerospace.sh`
+
 ## Features
 
 - **Lifecycle State**: `IDLE`, `RUNNING`, `PAUSED` with task selection + stash refs
 - **Stream Deck Integration**:
   - Key 0 (top-left): Lifecycle control (`START`/`PAUSE`/`RESUME`)
   - Key 1 (top row): `STOP` when running/paused, `RESUME` when a global stash exists
+  - Key 2 (top row): VIEW layer toggle (task/workspace browser)
   - Key 5 (middle-left): AI pulse indicator
   - Keys 10–14 (bottom row): Microsoft Edge shortcuts (when Edge is visible)
 - **Action Layers**:
@@ -154,7 +165,7 @@ The application will:
 ## Key Layout
 
 ```
-[ 0 STATE ] [ 1 STOP ] [   2   ] [   3   ] [   4   ]
+[ 0 STATE ] [ 1 STOP ] [ 2 VIEW] [   3   ] [   4   ]
 [  5  AI  ] [   6   ] [   7   ] [   8   ] [   9   ]
 [10 EDGE* ] [11 EDGE*] [12 EDGE*] [13 EDGE*] [14 EDGE*]
 ```

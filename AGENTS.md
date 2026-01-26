@@ -1,5 +1,17 @@
 # AGENTS.md
 
+## Index (where to find what)
+- Repo vision + defaults (this file): `AGENTS.md`
+- Implementation entry point: `src/index.ts`
+- Stream Deck layout + handlers: `src/streamDeck.ts`
+- Lifecycle: `src/lifecycle.ts`, `src/core/lifecyclePlans.ts`, `src/core/lifecycleActions.ts`
+- Stash stack + plan/execute: `src/core/plans.ts`, `src/core/executePlan.ts`
+- Task workspaces (Stage 2): `src/core/taskWorkspaces.ts`, `src/core/taskPlans.ts`, `src/core/taskActions.ts`
+- VIEW layer (task/workspace browser): `src/core/viewPlans.ts`, `src/taskSelection.ts`, `src/streamDeck.ts`
+- Persistence: `src/core/persistence.ts` (`state/` + `debug/`)
+- Testing docs: `TESTING.md`, `STAGE2_TESTING.md`, `STAGE3_TESTING.md`
+- Roadmap: `roadmap.md`
+
 ## Overview
 This repo contains a Stream Deck controller for macOS built with
 `@elgato-stream-deck/node`. It manages a simple lifecycle state machine,
@@ -108,10 +120,12 @@ VIEW should expose:
 ### AeroSpace debugging notes
 - When you want “all windows in the current workspace”, use `list-windows --workspace focused` (not `list-windows --focused`, which targets a single focused window).
 - If AeroSpace actions appear to do nothing, suspect PATH issues (`aerospace` not found) and check the `[AeroSpace FAIL]` log payload for `ENOENT`/stderr.
+  Snapshot helpers now return null on AeroSpace connection errors; lifecycle actions should no-op instead of crashing.
 
 ### Stream Deck button mapping (15-key)
 - Key 0 (top-left): START/PAUSE/RESUME (lifecycle over tasks)
 - Key 1 (top row): STOP when running/paused, RESUME when a global stash exists
+- Key 2 (top row): VIEW layer toggle (task/workspace browser with paging + safe detach)
 - Key 5 (middle-left): AI pulse indicator
 - Keys 10–14 (bottom row): Microsoft Edge shortcut row (when Edge is visible)
 
@@ -193,6 +207,14 @@ prompt for Accessibility / Input Monitoring permissions the first time it runs.
 - Stage 3 does not close windows or auto-clean strays.
 - Keep `STAGE3_TESTING.md` updated when lifecycle behavior changes.
 
+## VIEW layer implementation notes
+- Key 2 toggles the VIEW layer while `IDLE` (blocked while running for safety).
+- VIEW is a task/workspace browser:
+  - NEW creates a local task id (`adhoc-001`, `adhoc-002`, ...) and checks it out.
+  - Tap a task = select + checkout only (no lifecycle start).
+  - Hold a task = safe "delete": move windows from `task:<id>` to `inbox` and remove from registry.
+- Rationale: matches git ergonomics (`git status/branch/stash list`), avoids destructive actions on the main layer, and models delete as de-association (`git rm --cached`) rather than closing windows.
+
 ## Tooling and setup
 Build and run:
 - Build: `npm run build` (TypeScript -> `dist/`)
@@ -233,6 +255,8 @@ Packaging/deploy:
 - Implemented Stage 3 lifecycle: lifecycle state is persisted with task + stash refs,
   START/PAUSE/RESUME/STOP are built on the stash stack + task checkout, and STOP
   records `lastStopStashId` in the task registry for recoverable sessions.
+- AeroSpace reserves workspace names starting with `_`, so the temporary “blank”
+  workspaces used during stash are named `blank-<monitorId>` (not `__blank...`).
 - Added a macOS install script that builds the Node and Swift components,
   creates a minimal `.app` bundle, and bakes in a selected free port plus a
   matching AeroSpace template so local installs avoid port collisions.

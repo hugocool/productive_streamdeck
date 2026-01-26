@@ -1,7 +1,8 @@
-# Stage 3 Testing Guide: Lifecycle Over Tasks
+# Stage 3 Testing Guide: Workspace Management (Narrative Walkthrough)
 
-This guide validates the Stage 3 lifecycle flow (START → PAUSE → RESUME → STOP)
-over task workspaces. It includes a feedback form at the end.
+This guide is written for human testers. It explains what each workspace
+management button does, how it maps to the git-like model, and how to validate
+behavior. It ends with a feedback form.
 
 ## Prereqs
 - macOS with AeroSpace running
@@ -13,7 +14,8 @@ Optional:
 
 ## One-time setup (selected task)
 
-Stage 3 requires a selected task ID. Set it in `state/appState.json`:
+Stage 3 requires a selected task ID. The app auto-assigns a default task on
+first run (pick via the VIEW layer on key 2), or you can set it in `state/appState.json`:
 
 ```json
 {
@@ -24,6 +26,80 @@ Stage 3 requires a selected task ID. Set it in `state/appState.json`:
 ```
 
 Tip: any string works for now. The workspace name will be `task:demo-task`.
+
+## Narrative: what you are testing
+
+The Stream Deck is a git-style porcelain for windows:
+- A task is a "branch" (workspace `task:<id>`).
+- START/RESUME is "checkout + stash ambient".
+- PAUSE is "stash task and return to ambient".
+- STOP is "stash task and return to ambient (recoverable)".
+
+Stage 3 never closes windows. Everything should be reversible via the stash.
+
+## Button map (workspace management)
+
+- Key 0: START / PAUSE / RESUME
+  - START (IDLE): stash ambient, checkout task workspace.
+  - PAUSE (RUNNING): stash task, restore ambient.
+  - RESUME (PAUSED): stash ambient, checkout task, restore task.
+- Key 1: STOP / RESUME (global stash toggle)
+  - STOP (RUNNING/PAUSED): stash task, restore ambient, lifecycle -> IDLE.
+  - RESUME (IDLE with stash@{0}): pop top stash.
+- Key 2: VIEW layer toggle
+  - Opens/closes a task/workspace browser (pagination + safe detach).
+  - Tap opens the view; use ESC (key 4) to exit.
+
+In the VIEW layer:
+- Key 0: NEW (creates a new local task id like `adhoc-001` and checks it out)
+- Key 1: PREV page
+- Key 3: NEXT page
+- Key 4: ESC (exit view)
+- Key 2: page indicator (no action)
+- Keys 5–14: task list
+  - Tap: checkout + select, then exit VIEW back to MAIN (safe; does not start lifecycle)
+  - Hold: detach windows from that task workspace to `inbox` and remove it from the local registry
+
+## Git analogy (why it behaves this way)
+
+- START == `stash` + `checkout` (safe focus change).
+- PAUSE == `stash` task + return to ambient.
+- RESUME == `stash` ambient + `checkout` + apply task stash.
+- STOP == `stash` task + return to ambient (recoverable stop).
+
+## Mermaid: lifecycle state machine
+
+```mermaid
+stateDiagram-v2
+  [*] --> IDLE
+  IDLE --> RUNNING: START (stash ambient + checkout task)
+  RUNNING --> PAUSED: PAUSE (stash task + restore ambient)
+  PAUSED --> RUNNING: RESUME (stash ambient + restore task)
+  RUNNING --> IDLE: STOP (stash task + restore ambient)
+  PAUSED --> IDLE: STOP (stash task + restore ambient)
+```
+
+## Mermaid: high-level flow per action
+
+```mermaid
+flowchart TD
+  A[START] --> B[Stash ambient visible]
+  B --> C[Checkout task workspace]
+  C --> D[RUNNING]
+
+  E[PAUSE] --> F[Stash task windows]
+  F --> G[Restore ambient stash]
+  G --> H[PAUSED]
+
+  I[RESUME] --> J[Stash ambient visible]
+  J --> K[Checkout task workspace]
+  K --> L[Restore task stash]
+  L --> M[RUNNING]
+
+  N[STOP] --> O[Stash task windows]
+  O --> P[Restore ambient stash]
+  P --> Q[IDLE]
+```
 
 ## Test 1: START creates an ambient stash and focuses the task
 1. Ensure multiple windows are visible across monitors.

@@ -15,6 +15,6 @@ test('isTaskWs detects task workspaces', () => {
 
 test('isInternalWorkspace detects stash and blank workspaces', () => {
   assert.equal(isInternalWorkspace('STASH'), true);
-  assert.equal(isInternalWorkspace('__blank1'), true);
+  assert.equal(isInternalWorkspace('blank-1'), true);
   assert.equal(isInternalWorkspace(INBOX_WS), false);
 });

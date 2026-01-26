@@ -13,8 +13,18 @@ export class LifecycleStore {
     return this.currentState;
   }
 
+  private isSameState(a: LifecycleState, b: LifecycleState): boolean {
+    return (
+      a.lifecycle === b.lifecycle &&
+      a.selectedTaskId === b.selectedTaskId &&
+      a.activeTaskId === b.activeTaskId &&
+      a.ambientStashId === b.ambientStashId &&
+      a.pausedTaskStashId === b.pausedTaskStashId
+    );
+  }
+
   setState(newState: LifecycleState): void {
-    if (this.currentState !== newState) {
+    if (!this.isSameState(this.currentState, newState)) {
       console.log(`Lifecycle transition: ${this.currentState.lifecycle} -> ${newState.lifecycle}`);
       this.currentState = newState;
       this.notifyListeners();

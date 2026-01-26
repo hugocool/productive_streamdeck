@@ -1,7 +1,9 @@
 export const TASK_PREFIX = 'task:';
 export const INBOX_WS = 'inbox';
 export const STASH_WS = 'STASH';
-export const BLANK_PREFIX = '__blank';
+// AeroSpace reserves workspace names starting with "_" for future use.
+// Use a safe prefix for our temporary "blank" workspaces used during stash.
+export const BLANK_PREFIX = 'blank-';
 export const INTERNAL_WS_PREFIXES = [BLANK_PREFIX, '__stash'];
 
 export function taskWs(taskId: string): string {

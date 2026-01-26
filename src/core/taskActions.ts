@@ -1,6 +1,6 @@
 import { AerospaceRunner } from '../adapters/aerospaceRunner';
 import { executePlan } from './executePlan';
-import { readFocusedWindowId, readVisibleSnapshot } from './taskSnapshot';
+import { readFocusedWindowId, tryReadVisibleSnapshot } from './taskSnapshot';
 import { loadTaskRegistry } from './persistence';
 import { planCheckoutTask, planTrackFocused, planTrackVisible, planUntrackFocused } from './taskPlans';
 
@@ -38,7 +38,11 @@ export async function trackVisible(
   runner: AerospaceRunner,
   options: { dryRun: boolean }
 ): Promise<void> {
-  const snapshot = await readVisibleSnapshot(runner);
+  const snapshot = await tryReadVisibleSnapshot(runner);
+  if (!snapshot) {
+    console.warn('Skipping trackVisible: AeroSpace snapshot unavailable.');
+    return;
+  }
   const plan = planTrackVisible(taskId, snapshot.windows);
   await executePlan(plan, runner, options);
 }
