@@ -6,10 +6,16 @@ physical porcelain over window state, using git vocabulary: workspaces are
 branches, checkout shows one, stash hides and restores windows.
 
 ## Orientation
-1. **The plan lives on the tracker.** GitHub issue #2 is the wayfinder map; its
-   open sub-issues are the decisions still to make. Read it before choosing work.
-2. **Vocabulary:** `CONTEXT.md`. **Decisions with rationale:** `docs/adr/`.
-3. **Direction as of 2026-09:** the task lifecycle (START/PAUSE/RESUME/STOP over
+1. **Process comes from Superpowers.** Brainstorm before building, tests before
+   implementation, systematic debugging before a fix, verification before any
+   claim that something works. Design specs land in `docs/superpowers/specs/`.
+2. **The tracker is supplemental.** GitHub issue #2 is the wayfinder map; its
+   open sub-issues are the decisions still to make. Read it before choosing
+   work and record decisions there. Where the tracker skills and Superpowers
+   disagree, Superpowers wins: wayfinder's "plan, don't do" records what is
+   still undecided, it does not stop an agreed build from proceeding.
+3. **Vocabulary:** `CONTEXT.md`. **Decisions with rationale:** `docs/adr/`.
+4. **Direction as of 2026-09:** the task lifecycle (START/PAUSE/RESUME/STOP over
    a stash stack) is being replaced by project switching that never moves or
    closes a window, plus one lifecycle script for the whole stack. What the
    keys do today is in `docs/manual-testing.md`.
