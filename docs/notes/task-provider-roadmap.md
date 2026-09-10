@@ -1,4 +1,7 @@
-# Roadmap: Task Provider Integration (TickTick + Notion)
+# Parked: task provider integration (TickTick + Notion)
+
+Out of scope for wayfinder map #2. Kept for when task identity from a tracker becomes relevant again.
+
 
 This roadmap defines how to integrate task providers with the existing
 Productivity OS workflow. It assumes tasks live in a Notion "Sprints" database

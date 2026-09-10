@@ -9,5 +9,10 @@ native/keysender/.swiftpm/
 *.log
 .DS_Store
 .env
-node_modules
-.history
+.history/
+# runtime state and debug output written by the controller
+state/
+debug/
+# Claude Code per-user and agent scratch
+.claude/settings.local.json
+.claude/worktrees/

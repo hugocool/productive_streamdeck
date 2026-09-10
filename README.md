@@ -1,329 +1,54 @@
 # Productive Stream Deck
 
-A Node.js TypeScript application for controlling a 15-key Elgato Stream Deck on
-macOS, with a lightweight state machine, AeroSpace integration, and an HTTP
-status server for external callbacks.
+A Node.js/TypeScript controller for a 15-key Elgato Stream Deck on macOS. It drives the [AeroSpace](https://github.com/nikitabobko/AeroSpace) tiling window manager so that switching between projects across several monitors is a key press, and never closes a window. A small HTTP server lets agents and scripts poke the deck.
 
-## Index
-- Agent instructions / decisions: `AGENTS.md`
-- Module-level agent notes: `src/AGENTS.md`
-- Testing (stash stack + plumbing): `TESTING.md`
-- Testing (tasks as branches): `STAGE2_TESTING.md`
-- Testing (lifecycle + view layer): `STAGE3_TESTING.md`
-- Roadmap (TickTick/Notion): `roadmap.md`
-- AeroSpace template config: `config/aerospace.toml`
-- AeroSpace config sync script: `scripts/sync-aerospace.sh`
+- Agent and contributor instructions: [AGENTS.md](AGENTS.md) (loaded by Claude Code through [CLAUDE.md](CLAUDE.md))
+- Vocabulary: [CONTEXT.md](CONTEXT.md). Decisions: [docs/adr/](docs/adr/)
+- Plan and open decisions: [GitHub issue #2](https://github.com/hugocool/productive_streamdeck/issues/2)
+- Manual test checklist: [docs/manual-testing.md](docs/manual-testing.md)
 
-## Features
+## What it does today
+- Lifecycle keys (START / PAUSE / RESUME / STOP) over a selected task, built on a recoverable stash stack: windows are parked in a hidden workspace and restored, never closed.
+- A VIEW layer that lists task workspaces, creates new ones, and safely detaches windows to an inbox.
+- An app row of Microsoft Edge shortcuts that appears only while Edge is visible, delivered through a native Swift key sender.
+- Status endpoints on a local port: `GET /health`, `GET /status`, `POST /ping`, `POST /update`, `GET /agent-done` (pulses a key), `GET /aerospace-event` (refreshes app rows).
 
-- **Lifecycle State**: `IDLE`, `RUNNING`, `PAUSED` with task selection + stash refs
-- **Stream Deck Integration**:
-  - Key 0 (top-left): Lifecycle control (`START`/`PAUSE`/`RESUME`)
-  - Key 1 (top row): `STOP` when running/paused, `RESUME` when a global stash exists
-  - Key 2 (top row): VIEW layer toggle (task/workspace browser)
-  - Key 5 (middle-left): AI pulse indicator
-  - Keys 10–14 (bottom row): Microsoft Edge shortcuts (when Edge is visible)
-- **Action Layers**:
-  - Meta-actions: global controls that stay consistent across contexts
-  - App-specific actions: context-aware shortcuts that change based on active app
-- **AeroSpace CLI Integration**: Stash/unstash helpers for window management
-- **Native Key Sender**: Swift helper for reliable macOS shortcut delivery (`native/keysender`)
-- **Status Server** (defaults to port 3000):
-  - `GET /health`
-  - `GET /status`
-  - `POST /ping`
-  - `POST /update`
-  - `GET /agent-done` (triggers AI pulse)
-  - `GET /aerospace-event` (refreshes context on workspace changes)
+The next step, tracked on issue #2, replaces the task lifecycle with summon-only project switching and adds one script to boot and maintain the whole stack.
 
-## Prerequisites
+## Requirements
+- macOS with AeroSpace installed (`brew install --cask nikitabobko/tap/aerospace`).
+- Node 18 or newer (`.nvmrc` provided).
+- A 15-key Stream Deck. Without one the HTTP server still runs.
+- Xcode command line tools, to build the key sender.
 
-- Node.js (v18 or higher). If you use `nvm`, this repo includes `.nvmrc` (run `nvm use`).
-- Elgato Stream Deck (15-key model)
-- macOS (AeroSpace optional, for window stashing)
-
-## Installation
-
-1. Clone the repository:
+## Install and run
 ```bash
 git clone https://github.com/hugocool/productive_streamdeck.git
 cd productive_streamdeck
-```
-
-2. Install dependencies:
-```bash
 npm install
-```
-
-## Shipping roadmap (macOS)
-
-Long-term, this should ship as a signed, installable macOS menu bar app. To get
-there incrementally, we plan to do:
-
-### Phase 1: Homebrew + LaunchAgent (option 2)
-
-Goal: repeatable installs + “runs on login” without building toolchains on end-user machines.
-
-Deliverables:
-- A `brew` tap/formula that installs `dist/`, production deps, and a prebuilt `native/keysender`.
-- A `launchd` LaunchAgent (`~/Library/LaunchAgents/...plist`) that runs the controller on login.
-- A `productive-streamdeck setup` command that:
-  - Installs/updates an AeroSpace hook script (instead of hardcoding `http://127.0.0.1:3000/...` in `~/.aerospace.toml`).
-  - Stores runtime config in `~/Library/Application Support/<bundle-id>/config.json`.
-  - Prints a minimal, safe patch to apply to the user’s existing `~/.aerospace.toml` (no blind overwrite).
-
-Notes:
-- This phase forces us to define stable paths, logging, and an uninstall story early.
-- If the HTTP server port changes, AeroSpace should call a hook script that discovers the current port (preferred) rather than hardcoding `3000`.
-
-### Phase 2: Menu bar app + managed daemon (option 4)
-
-Goal: “download → install → guided setup”, with a UI for state/health and permissions.
-
-Architecture (recommended):
-- A lightweight macOS menu bar app (Swift/AppKit) that manages a background daemon.
-- The daemon continues to run the Node Stream Deck controller (and shells out to AeroSpace + `native/keysender`).
-- The menu bar app provides: start/stop/restart, connection status, port/config display, logs, and “Install AeroSpace hook”.
-
-Work needed to get there:
-- Packaging:
-  - Bundle a Node runtime (or a single packaged Node executable) + `dist/` + `node_modules` + `keysender`.
-  - Code signing + notarization.
-- Configuration/secrets:
-  - Move API keys into macOS Keychain (menu bar UI for setup/rotation).
-  - Keep non-secret preferences in Application Support.
-- Networking:
-  - Bind the local server to `127.0.0.1` only.
-  - Prefer a stable discovery mechanism (hook script + config file) over a fixed port.
-- Permissions/onboarding:
-  - Guided checklist for Accessibility / Input Monitoring (required for key sending).
-  - Health UI for Stream Deck connection and AeroSpace CLI availability.
-- Updates:
-  - Add auto-update (Sparkle) once signing/notarization is in place.
-
-Rough effort (very approximate):
-- Minimal prototype menu bar controller (start/stop + status + logs): ~3–7 days.
-- Production-ready (signing/notarization, Keychain, onboarding UX, updater): ~2–4 weeks.
-
-## Usage
-
-1. Build the project:
-```bash
+npm run native:build      # Swift key sender; macOS will ask for Accessibility + Input Monitoring
+npm run aerospace:sync    # renders config/aerospace.toml with a free port, writes .streamdeck-port
 npm run build
+npm start                 # or: npm run dev (rebuild + restart on change)
 ```
 
-2. Start the application:
-```bash
-npm start
-```
+Copy or merge the rendered AeroSpace config into `~/.aerospace.toml` and reload AeroSpace. The `exec-on-workspace-change` hook in it must point at the port printed on startup.
+
+`DRY_RUN=1 npm run dev` writes plans to `debug/last-plan.json` without moving any window.
 
 ## Testing
-
-See `TESTING.md` for the Stage 1.5 stash stack verification plan and
-feedback form.
-See `STAGE2_TESTING.md` for Stage 2 task workspace testing and feedback.
-See `STAGE3_TESTING.md` for Stage 3 lifecycle testing and feedback.
-
-## Stash stack (Stage 1.5)
-
-STOP/RESUME now uses a stack of stashes (`stash@{0}`, `stash@{1}`, ...).
-Each STOP pushes a new stash (visible windows + visible workspaces); RESUME
-pops the latest stash and restores it.
-
-## Tasks as branches (Stage 2)
-
-Stage 2 introduces task workspaces:
-- Task workspace prefix: `task:<id>`
-- Checkout: `summon-workspace task:<id>` (no window moves)
-- Track focused: move focused window into `task:<id>`
-- Track visible: move visible windows into `task:<id>` with safety filters
-- Untrack focused: move focused window to `inbox`
-
-## Lifecycle over tasks (Stage 3)
-
-Lifecycle now treats tasks as the unit of focus:
-- START: stash ambient visible windows (excluding the task workspace), then checkout the task
-- PAUSE: stash task windows, then restore the ambient stash
-- RESUME: stash the current ambient view, checkout the task, then restore the task stash
-- STOP: stash task windows and restore ambient view (recoverable stop)
-
-Stage 3 does not close windows or clean strays automatically.
-START/RESUME require `selectedTaskId` in `state/appState.json`.
-
-## Hardware handshake (check deck)
-
-Use the minimal Stream Deck + AeroSpace probe:
 ```bash
-npm run check:deck
+npm test            # builds, then runs test/runTests.mjs
+npm run check:deck  # lights the deck and checks AeroSpace wiring
 ```
 
-The application will:
-- Connect to your Stream Deck
-- Start the Express server (defaults to port 3000)
-- Initialize the state machine in IDLE state
-
-## Key Layout
-
-```
-[ 0 STATE ] [ 1 STOP ] [ 2 VIEW] [   3   ] [   4   ]
-[  5  AI  ] [   6   ] [   7   ] [   8   ] [   9   ]
-[10 EDGE* ] [11 EDGE*] [12 EDGE*] [13 EDGE*] [14 EDGE*]
-```
-
-`EDGE*` keys render only when Edge is visible (otherwise the bottom row is cleared).
-
-## Action Layers
-
-We design for two complementary modes:
-
-- System-level productivity: global controls that stay consistent across contexts
-- App-specific productivity: context-aware shortcuts that adapt to the active app or monitor
-
-## Workflow model (proposal)
-
-The long-term goal is to make the workflow/meta buttons feel like Git:
-
-- Branch == task context (a named set of windows/workspaces)
-- Checkout == switch tasks (swap the visible task across monitors)
-- Stash push/pop == hide/restore windows (move to/from a hidden workspace)
-- Commit == snapshot (save current window set/layout for later restore)
-- Clean == close strays (end interruptions by removing unrelated windows)
-
-Defaults we’re building toward (important):
-- START: checkout/focus only; windows are tracked explicitly (“add window to task”).
-  - Hold START: adopt visible → task (bulk add).
-- PAUSE: stash all visible workspaces (multi-monitor) + switch to an `INBOX`/untracked zone.
-  - Hold PAUSE: stash focused workspace only.
-- STOP: stash + archive (recoverable).
-  - Hold STOP: hard stop (close windows).
-- VIEW: dedicated layer for status/log/stash list/recovery.
-- Hold = intensity on same intent; Layer toggle = different intent category.
-
-Task/branch naming is expected to come from a task tracker (Notion/TickTick/Toggl/etc); the exact workspace representation is intentionally deferred until sync exists.
-
-Current app-specific targets:
-- Microsoft Edge (Notion lives here)
-- Visual Studio Code
-- TickTick
-- Slack (or other messaging apps)
-- Notion Calendar
-- Toggl
-- Raycast
-
-## AeroSpace configuration
-
-AeroSpace is the always-on "physics layer" for window routing and workspace
-invariants. We keep that logic in a static config, and run state transitions
-from Node.
-
-Template config:
-- `config/aerospace.toml`
-
-Install (copy and customize app IDs):
-```bash
-cp config/aerospace.toml ~/.aerospace.toml
-```
-
-To find bundle IDs:
-```bash
-aerospace list-apps
-```
-
-Note: avoid force-assigning workspaces you want to "swap" across monitors.
-If you want the “INBOX/untracked by default” workflow, adjust the AeroSpace routing so new windows land in `INBOX` (or remove per-app auto-routing).
-
-We use `exec-on-workspace-change` to notify the Node controller so the
-Stream Deck can refresh context-aware buttons.
-
-## State and debug artifacts
-
-The plan/execute pipeline writes:
-- `debug/last-plan.json`
-- `debug/last-exec-log.json`
-- `state/globalStash.json` (stash stack, version 2)
-- `state/appState.json`
-
-## AeroSpace diagnostics
-
-If window stashing/restoring looks like “nothing happened”, validate AeroSpace behavior directly first:
-
-```bash
-aerospace list-windows --monitor focused --workspace focused --format "%{window-id} | %{workspace} | %{app-name} | %{window-title}"
-aerospace list-windows --focused --format "%{window-id} | %{workspace} | %{app-name} | %{window-title}"
-```
-
-The first command lists windows in the focused workspace; the second lists (at most) the focused window. Also check logs for `ENOENT` if the controller can’t find the `aerospace` binary via `PATH`.
-
-## macOS permissions
-
-The native shortcut helper uses CoreGraphics to post synthetic key events. macOS may prompt for Accessibility / Input Monitoring permissions.
-
-## API Endpoints
-
-Note: the server defaults to port 3000, but may auto-increment if that port is busy. Check the app logs for the active port.
-
-### GET /health
-Returns server health status
-```bash
-curl http://localhost:3000/health
-```
-
-### GET /status
-Returns current application state
-```bash
-curl http://localhost:3000/status
-```
-
-### GET /agent-done
-Trigger an AI pulse on the Stream Deck
-```bash
-curl http://localhost:3000/agent-done
-```
-
-### GET /aerospace-event
-Refresh Stream Deck context after AeroSpace workspace changes
-```bash
-curl http://localhost:3000/aerospace-event
-```
-
-### POST /ping
-Send a status ping from external agents
-```bash
-curl -X POST http://localhost:3000/ping \
-  -H "Content-Type: application/json" \
-  -d '{"source": "raycast", "message": "Task completed"}'
-```
-
-### POST /update
-Send an action update
-```bash
-curl -X POST http://localhost:3000/update \
-  -H "Content-Type: application/json" \
-  -d '{"action": "status_update", "data": {"progress": 50}}'
-```
-
-## Project Structure
-
-```
-productive_streamdeck/
-├── src/
-│   ├── index.ts           # Main entry point
-│   ├── stateMachine.ts    # State machine implementation
-│   ├── streamDeck.ts      # Stream Deck controller + button artwork
-│   ├── aerospace.ts       # AeroSpace CLI wrappers
-│   └── server.ts          # Express server
-├── package.json           # Project dependencies
-├── tsconfig.json          # TypeScript configuration
-└── README.md              # This file
-```
-
-## Development
-
-Key technologies:
-- `@elgato-stream-deck/node`: Stream Deck hardware interface
-- `sharp`: Image processing for button graphics
-- `express`: HTTP server for external integrations
+## Layout of the repo
+- `src/` controller, plan builders, AeroSpace adapter, HTTP server
+- `native/keysender/` Swift helper for app shortcuts
+- `config/aerospace.toml` AeroSpace template; `scripts/` sync, dev, and install helpers
+- `test/` unit tests on the pure plan builders
+- `docs/` ADRs, manual tests, agent tracker config, parked notes
+- `state/`, `debug/` runtime output, gitignored
 
 ## License
-
 MIT
